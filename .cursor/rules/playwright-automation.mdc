@@ -1,0 +1,24 @@
+---
+description: Playwright automation patterns for Instagram bot
+globs: src/{bot,main,humanBehavior,fingerprint}.ts
+alwaysApply: false
+---
+
+# Playwright Automation
+
+- Prefer `getByRole`, `getByText`, `locator` with aria-labels over brittle CSS
+- Reuse `HumanBehavior` for clicks, typing, scrolling — do not duplicate delay logic
+- Screenshot on error to `data/logs/` (pattern: `{context}_error_{username}.png`)
+- Respect `pauseState` — call `humanBehavior.checkForPause()` in long flows
+- Use `developerMode` shorter delays for local debugging only
+- Scope locators to `div[role="dialog"]` when interacting with post modals
+- Filter pinned posts: `hasNot: page.locator('svg[aria-label="Pinned post icon"]')`
+
+```typescript
+// BAD — global selector, no dialog scope
+await page.locator('textarea').fill(comment);
+
+// GOOD — scoped to comment dialog
+const dialog = 'div[role="dialog"]';
+await page.locator(dialog).locator('textarea[aria-label*="Add a comment"]').fill(comment);
+```

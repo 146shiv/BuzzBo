@@ -241,7 +241,7 @@ export const config: Config = {
             sourceMode: 'hashtag_list',
             hashtags: ['jee'],
             skillsFile: 'data/accounts/studybo.app/skills.txt',
-            aiPromptHint: 'Write a supportive comment related to fitness and personal growth.',
+            aiPromptHint: "Respond supportively to the post as a real student—helpful, relatable",
             actionDelaySeconds: { min: 80, max: 160 },
             targets: ['instagram', 'playwright'],
             // sourceMode filters where posts come from — same skillsFile for all modes:
