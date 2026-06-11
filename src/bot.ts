@@ -5,6 +5,7 @@ import { AccountConfig, SettingsConfig, BehaviorConfig, HashtagSearchConfig } fr
 import { HumanBehavior, PauseState } from './humanBehavior';
 import { Logger } from './logger';
 import { AICommentGenerator } from './genai';
+import { CommentHistoryStore, extractPostShortcode } from './commentHistory';
 
 export type InteractionResult = 'SUCCESS' | 'SKIPPED' | 'FAILED';
 
@@ -30,6 +31,7 @@ export class InstagramBot {
     private readonly developerMode: boolean;
     private readonly logger: Logger;
     private readonly aiGenerator: AICommentGenerator;
+    private readonly commentHistory: CommentHistoryStore;
     private readonly channelSkillsContext?: string;
     private capturedVideoUrl: string | undefined = undefined;
     private isCapturingVideo: boolean = false;
@@ -41,6 +43,7 @@ export class InstagramBot {
         pauseState: PauseState,
         logger: Logger,
         aiGenerator: AICommentGenerator,
+        commentHistory: CommentHistoryStore,
         channelSkillsContext?: string
     ) {
         this.config = accountConfig;
@@ -53,6 +56,7 @@ export class InstagramBot {
         this.developerMode = globalSettings.developerMode;
         this.logger = logger;
         this.aiGenerator = aiGenerator;
+        this.commentHistory = commentHistory;
 
         if (this.developerMode) {
             this.actionDelays = { min: 1000, max: 2000 };
@@ -417,8 +421,13 @@ export class InstagramBot {
     private async commentOnOpenPost(
         targetUsername: string,
         aiPromptHint: string | undefined,
-        logIdentifier: string
+        postShortcode: string
     ): Promise<InteractionResult> {
+        if (this.commentHistory.hasCommented(this.config.username, postShortcode)) {
+            this.logger.warn(`Already commented on post ${postShortcode}. Skipping.`);
+            return 'SKIPPED';
+        }
+
         const postRoot = await this.getPostRootLocator();
         this.logger.success('Post content loaded.');
 
@@ -494,7 +503,7 @@ export class InstagramBot {
         if ((await commentTextarea.count()) === 0) {
             this.logger.warn('Comments might be disabled for this post. Cannot find comment area.');
             await this.page.screenshot({
-                path: path.join(this.logsDir, `no_comment_area_error_${this.config.username}_${logIdentifier}.png`),
+                path: path.join(this.logsDir, `no_comment_area_error_${this.config.username}_${postShortcode}.png`),
             });
             return 'SKIPPED';
         }
@@ -511,7 +520,7 @@ export class InstagramBot {
         if ((await postButton.count()) === 0 || !(await postButton.isEnabled())) {
             this.logger.error('Could not find an enabled "Post" button.');
             await this.page.screenshot({
-                path: path.join(this.logsDir, `no_post_button_error_${this.config.username}_${logIdentifier}.png`),
+                path: path.join(this.logsDir, `no_post_button_error_${this.config.username}_${postShortcode}.png`),
             });
             return 'FAILED';
         }
@@ -522,20 +531,29 @@ export class InstagramBot {
 
         const ourComment = postRoot.getByText(aiComment);
         if ((await ourComment.count()) > 0) {
-            this.logger.success(`Successfully commented on post (${logIdentifier}).`);
+            this.logger.success(`Successfully commented on post (${postShortcode}).`);
         } else {
             this.logger.warn('Could not verify if comment was posted successfully.');
         }
 
-        await this.logInteraction(logIdentifier, 'comment', aiComment);
+        const postUrl = extractPostShortcode(this.page.url()) ? this.page.url() : undefined;
+        this.commentHistory.recordComment(this.config.username, postShortcode, {
+            postUrl,
+            commentText: aiComment,
+        });
+        await this.logInteraction(postShortcode, 'comment', aiComment);
         return 'SUCCESS';
     }
 
     public async runCommentTaskOnUrl(postUrl: string, aiPromptHint?: string): Promise<InteractionResult> {
-        const urlMatch = postUrl.match(/instagram\.com\/(p|reel)\/([^/?#]+)/i);
-        const postShortcode = urlMatch ? urlMatch[2] : postUrl;
+        const postShortcode = extractPostShortcode(postUrl) ?? postUrl;
 
         this.logger.header(`----- Starting Comment Task for ${postUrl} -----`);
+
+        if (this.commentHistory.hasCommented(this.config.username, postShortcode)) {
+            this.logger.warn(`Already commented on post ${postShortcode}. Skipping.`);
+            return 'SKIPPED';
+        }
 
         try {
             this.capturedVideoUrl = undefined;
@@ -588,8 +606,7 @@ export class InstagramBot {
     }
 
     private extractShortcodeFromUrl(url: string): string | null {
-        const match = url.match(/instagram\.com\/(p|reel)\/([^/?#]+)/i);
-        return match ? match[2] : null;
+        return extractPostShortcode(url);
     }
 
     private async tryClickHashtagTopTab(): Promise<void> {
@@ -884,7 +901,13 @@ export class InstagramBot {
             this.logger.success('Post opened in a dialog.');
             await this.humanBehavior.randomizedWait(this.behavior.shortWaitMs);
 
-            return await this.commentOnOpenPost(targetUsername, aiPromptHint, targetUsername);
+            const postShortcode = extractPostShortcode(this.page.url());
+            if (!postShortcode) {
+                this.logger.warn('Could not determine post shortcode from URL. Skipping.');
+                return 'SKIPPED';
+            }
+
+            return await this.commentOnOpenPost(targetUsername, aiPromptHint, postShortcode);
         } catch (error: any) {
             this.logger.error(`An error occurred during comment task for @${targetUsername}: ${error.message}`);
             await this.page.screenshot({ path: path.join(this.logsDir, `comment_task_error_${this.config.username}_${targetUsername}.png`) });

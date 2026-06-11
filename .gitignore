@@ -2,3 +2,5 @@ node_modules/
 data/cookies/
 data/logs/
 data/fingerprints/
+data/*.db
+data/*.db-*

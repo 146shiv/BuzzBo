@@ -15,6 +15,7 @@ import {
 import { generateFingerprint, Fingerprint } from './fingerprint';
 import { Logger } from './logger';
 import { AICommentGenerator } from './genai';
+import { CommentHistoryStore } from './commentHistory';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const globalLogger = new Logger('SYSTEM');
@@ -26,6 +27,7 @@ const cookiesDir = path.join(dataDir, 'cookies');
 const logsDir = path.join(dataDir, 'logs');
 const fingerprintsDir = path.join(dataDir, 'fingerprints');
 const globalLogPath = path.join(logsDir, 'interaction_log.csv');
+const commentHistoryPath = path.join(dataDir, 'comment_history.db');
 const profileStatsPath = path.join(logsDir, 'profile_stats.csv');
 
 const CSV_HEADER = 'username,post_count,follower_count\n';
@@ -200,6 +202,7 @@ function getSessionInitOptions(
 async function initializeBotSession(
     accountToUse: AccountConfig,
     aiGenerator: AICommentGenerator,
+    commentHistory: CommentHistoryStore,
     logger: Logger,
     accountSkillsCache: Map<string, string | undefined>,
     options: { headless?: boolean; forceManualLogin?: boolean; waitForLoginConfirm?: () => Promise<void> } = {}
@@ -277,6 +280,7 @@ async function initializeBotSession(
             pauseState,
             logger,
             aiGenerator,
+            commentHistory,
             channelSkillsContext
         );
         if (useManualLogin) {
@@ -299,12 +303,14 @@ async function launchBotForTask(
     targetUsername: string,
     aiPromptHint: string | undefined,
     aiGenerator: AICommentGenerator,
+    commentHistory: CommentHistoryStore,
     accountSkillsCache: Map<string, string | undefined>
 ): Promise<InteractionResult | 'LAUNCH_ERROR'> {
     const botLogger = new Logger(accountToUse.username);
     const session = await initializeBotSession(
         accountToUse,
         aiGenerator,
+        commentHistory,
         botLogger,
         accountSkillsCache,
         { headless: config.settings.headless }
@@ -330,6 +336,7 @@ async function launchBotForTask(
 
 async function runTestCommentMode(
     aiGenerator: AICommentGenerator,
+    commentHistory: CommentHistoryStore,
     accountSkillsCache: Map<string, string | undefined>
 ) {
     globalLogger.header('----- RUNNING IN TEST COMMENT MODE -----');
@@ -376,20 +383,20 @@ async function runTestCommentMode(
                 targetUsername,
                 accountToUse.aiPromptHint,
                 aiGenerator,
+                commentHistory,
                 accountSkillsCache
             );
             break;
         }
         case 'url_list':
-            await runUrlListForAccount(accountToUse, aiGenerator, accountSkillsCache);
+            await runUrlListForAccount(accountToUse, aiGenerator, commentHistory, accountSkillsCache);
             break;
         case 'hashtag_list': {
-            const seenShortcodes = loadCommentedShortcodesFromLog();
             await runHashtagScanForAccount(
                 accountToUse,
                 aiGenerator,
-                accountSkillsCache,
-                seenShortcodes
+                commentHistory,
+                accountSkillsCache
             );
             break;
         }
@@ -429,22 +436,6 @@ function normalizePostUrl(url: string): string {
         normalized = `https://${normalized}`;
     }
     return normalized.split('?')[0].replace(/\/$/, '') + '/';
-}
-
-function loadCommentedShortcodesFromLog(): Set<string> {
-    const shortcodes = new Set<string>();
-    if (!fs.existsSync(globalLogPath)) return shortcodes;
-
-    const lines = fs.readFileSync(globalLogPath, 'utf-8').split('\n').slice(1);
-    for (const line of lines) {
-        if (!line.trim()) continue;
-        const parts = line.split(',');
-        if (parts.length < 3) continue;
-        const target = parts[2]?.trim();
-        if (target) shortcodes.add(target);
-    }
-
-    return shortcodes;
 }
 
 function loadCommentGenerationSkills(relativeOrAbsolutePath: string): string | undefined {
@@ -503,6 +494,7 @@ interface UrlListResult {
 async function runUrlListForAccount(
     account: AccountConfig,
     aiGenerator: AICommentGenerator,
+    commentHistory: CommentHistoryStore,
     accountSkillsCache: Map<string, string | undefined>,
     urlsFileOverride?: string
 ): Promise<UrlListResult> {
@@ -534,6 +526,7 @@ async function runUrlListForAccount(
     const session = await initializeBotSession(
         account,
         aiGenerator,
+        commentHistory,
         sessionLogger,
         accountSkillsCache
     );
@@ -578,8 +571,8 @@ interface HashtagScanResult {
 async function runHashtagScanForAccount(
     account: AccountConfig,
     aiGenerator: AICommentGenerator,
-    accountSkillsCache: Map<string, string | undefined>,
-    seenShortcodes: Set<string>
+    commentHistory: CommentHistoryStore,
+    accountSkillsCache: Map<string, string | undefined>
 ): Promise<HashtagScanResult> {
     const resolved = resolveAccountSettings(account);
     const hashtags = resolved.hashtags;
@@ -598,6 +591,7 @@ async function runHashtagScanForAccount(
     const session = await initializeBotSession(
         account,
         aiGenerator,
+        commentHistory,
         sessionLogger,
         accountSkillsCache
     );
@@ -609,6 +603,7 @@ async function runHashtagScanForAccount(
 
     const { browser, bot } = session;
     const searchConfig = resolved.hashtagSearch;
+    const commentedShortcodes = commentHistory.getCommentedShortcodes(account.username);
 
     try {
         for (let h = 0; h < hashtags.length; h++) {
@@ -619,7 +614,11 @@ async function runHashtagScanForAccount(
 
             let rankedPosts;
             try {
-                rankedPosts = await bot.discoverAndRankHashtagPosts(hashtag, searchConfig, seenShortcodes);
+                rankedPosts = await bot.discoverAndRankHashtagPosts(
+                    hashtag,
+                    searchConfig,
+                    commentedShortcodes
+                );
             } catch (error: any) {
                 globalLogger.error(`@${account.username}: Failed to discover posts for #${hashtag}: ${error.message}`);
                 continue;
@@ -631,16 +630,18 @@ async function runHashtagScanForAccount(
                     `----- @${account.username} #${hashtag} post ${i + 1}/${rankedPosts.length}: ${candidate.url} -----`
                 );
 
-                if (seenShortcodes.has(candidate.shortcode)) {
+                if (commentHistory.hasCommented(account.username, candidate.shortcode)) {
                     globalLogger.warn(`Already commented on ${candidate.shortcode}. Skipping.`);
                     result.skipped++;
                     continue;
                 }
 
                 const commentResult = await bot.runCommentTaskOnUrl(candidate.url, account.aiPromptHint);
-                seenShortcodes.add(candidate.shortcode);
 
-                if (commentResult === 'SUCCESS') result.success++;
+                if (commentResult === 'SUCCESS') {
+                    commentedShortcodes.add(candidate.shortcode);
+                    result.success++;
+                }
                 else if (commentResult === 'SKIPPED') result.skipped++;
                 else result.failed++;
 
@@ -667,6 +668,7 @@ async function runHashtagScanForAccount(
 
 async function runUrlListPhase(
     aiGenerator: AICommentGenerator,
+    commentHistory: CommentHistoryStore,
     accountSkillsCache: Map<string, string | undefined>
 ) {
     const urlAccounts = getEnabledAccountsBySourceMode('url_list');
@@ -682,7 +684,7 @@ async function runUrlListPhase(
 
     for (const account of urlAccounts) {
         globalLogger.header(`----- URL list for @${account.username} -----`);
-        const result = await runUrlListForAccount(account, aiGenerator, accountSkillsCache);
+        const result = await runUrlListForAccount(account, aiGenerator, commentHistory, accountSkillsCache);
         totalSuccess += result.success;
         totalSkipped += result.skipped;
         totalFailed += result.failed;
@@ -722,6 +724,7 @@ function loadPostUrlsFromFile(relativeOrAbsolutePath: string): string[] {
 
 async function runHashtagCommentMode(
     aiGenerator: AICommentGenerator,
+    commentHistory: CommentHistoryStore,
     accountSkillsCache: Map<string, string | undefined>
 ) {
     globalLogger.warn(
@@ -746,7 +749,6 @@ async function runHashtagCommentMode(
         return;
     }
 
-    const seenShortcodes = loadCommentedShortcodesFromLog();
     let totalSuccess = 0;
     let totalSkipped = 0;
     let totalFailed = 0;
@@ -755,8 +757,8 @@ async function runHashtagCommentMode(
         const result = await runHashtagScanForAccount(
             account,
             aiGenerator,
-            accountSkillsCache,
-            seenShortcodes
+            commentHistory,
+            accountSkillsCache
         );
         totalSuccess += result.success;
         totalSkipped += result.skipped;
@@ -769,6 +771,7 @@ async function runHashtagCommentMode(
 
 async function runCommentUrlsMode(
     aiGenerator: AICommentGenerator,
+    commentHistory: CommentHistoryStore,
     accountSkillsCache: Map<string, string | undefined>
 ) {
     globalLogger.warn(
@@ -806,6 +809,7 @@ async function runCommentUrlsMode(
         const result = await runUrlListForAccount(
             account,
             aiGenerator,
+            commentHistory,
             accountSkillsCache,
             urlsFileOverride
         );
@@ -820,6 +824,7 @@ async function runCommentUrlsMode(
 
 async function runCheckAccountsMode(
     aiGenerator: AICommentGenerator,
+    commentHistory: CommentHistoryStore,
     accountSkillsCache: Map<string, string | undefined>
 ) {
     globalLogger.header('----- RUNNING IN ACCOUNT CHECK MODE -----');
@@ -840,6 +845,7 @@ async function runCheckAccountsMode(
         const session = await initializeBotSession(
             account,
             aiGenerator,
+            commentHistory,
             accountLogger,
             accountSkillsCache,
             { headless: false }
@@ -867,6 +873,7 @@ async function runCheckAccountsMode(
 
 async function runMonitorLoop(
     aiGenerator: AICommentGenerator,
+    commentHistory: CommentHistoryStore,
     accountSkillsCache: Map<string, string | undefined>
 ) {
     globalLogger.header('----- Phase 2: Monitor Loop -----');
@@ -923,6 +930,7 @@ async function runMonitorLoop(
         monitorSession = await initializeBotSession(
             monitorAccount,
             aiGenerator,
+            commentHistory,
             monitorLogger,
             accountSkillsCache,
             { headless: config.settings.headless }
@@ -935,7 +943,6 @@ async function runMonitorLoop(
     }
 
     const profileStats = loadProfileStatsFromCsv();
-    const seenShortcodes = loadCommentedShortcodesFromLog();
 
     try {
         while (true) {
@@ -993,6 +1000,7 @@ async function runMonitorLoop(
                                     targetUsername,
                                     task.account.aiPromptHint,
                                     aiGenerator,
+                                    commentHistory,
                                     accountSkillsCache
                                 );
 
@@ -1054,8 +1062,8 @@ async function runMonitorLoop(
                     await runHashtagScanForAccount(
                         account,
                         aiGenerator,
-                        accountSkillsCache,
-                        seenShortcodes
+                        commentHistory,
+                        accountSkillsCache
                     );
                 }
             }
@@ -1080,6 +1088,7 @@ async function runMonitorLoop(
 
 async function runUnifiedMode(
     aiGenerator: AICommentGenerator,
+    commentHistory: CommentHistoryStore,
     accountSkillsCache: Map<string, string | undefined>
 ) {
     globalLogger.header('----- Instagram AI Commenter Bot (Unified Mode) -----');
@@ -1090,7 +1099,7 @@ async function runUnifiedMode(
         return;
     }
 
-    await runUrlListPhase(aiGenerator, accountSkillsCache);
+    await runUrlListPhase(aiGenerator, commentHistory, accountSkillsCache);
 
     const hasMonitorWork = enabledAccounts.some(acc => {
         const mode = normalizeAccount(acc).sourceMode;
@@ -1102,7 +1111,7 @@ async function runUnifiedMode(
         return;
     }
 
-    await runMonitorLoop(aiGenerator, accountSkillsCache);
+    await runMonitorLoop(aiGenerator, commentHistory, accountSkillsCache);
 }
 
 (async () => {
@@ -1130,17 +1139,28 @@ async function runUnifiedMode(
         globalLogger.info('Created global interaction log file.');
     }
 
-    if (
-        !config.settings.mockAiComments &&
-        (!config.settings.googleAiApiKey ||
-            config.settings.googleAiApiKey === 'YOUR_GOOGLE_AI_API_KEY_HERE')
-    ) {
-        globalLogger.error('Google AI API key is not set in config.ts. Please add your key to continue.');
-        process.exit(1);
+    if (!config.settings.mockAiComments) {
+        const { aiProvider, googleAiApiKey, groqApiKey, localLlmBaseUrl, localLlmModel } =
+            config.settings;
+        const missingKey =
+            (aiProvider === 'gemini' &&
+                (!googleAiApiKey || googleAiApiKey === 'YOUR_GOOGLE_AI_API_KEY_HERE')) ||
+            (aiProvider === 'groq' &&
+                (!groqApiKey || groqApiKey === 'YOUR_GROQ_API_KEY_HERE')) ||
+            (aiProvider === 'local' && (!localLlmBaseUrl?.trim() || !localLlmModel?.trim()));
+
+        if (missingKey) {
+            globalLogger.error(
+                `AI provider "${aiProvider}" is not configured in config.ts. Set the required key/URL and retry.`
+            );
+            process.exit(1);
+        }
     }
 
     if (config.settings.mockAiComments) {
-        globalLogger.warn('mockAiComments is ON — Gemini API calls are skipped; using placeholder comments.');
+        globalLogger.warn('mockAiComments is ON — AI API calls are skipped; using placeholder comments.');
+    } else {
+        globalLogger.info(`AI provider: ${config.settings.aiProvider}`);
     }
 
     const enabledAccounts = config.accounts.filter(acc => acc.enabled);
@@ -1186,21 +1206,40 @@ async function runUnifiedMode(
         );
     }
 
-    const aiGenerator = new AICommentGenerator(config.settings.googleAiApiKey, {
+    const commentHistory = new CommentHistoryStore(commentHistoryPath);
+    if (commentHistory.getTotalCount() === 0) {
+        const imported = commentHistory.importFromInteractionLog(globalLogPath);
+        if (imported > 0) {
+            globalLogger.info(
+                `Imported ${imported} prior comment(s) from interaction_log.csv into comment history.`
+            );
+        }
+    }
+
+    const aiGenerator = new AICommentGenerator({
+        provider: config.settings.aiProvider,
+        googleAiApiKey: config.settings.googleAiApiKey,
+        groqApiKey: config.settings.groqApiKey,
+        groqModel: config.settings.groqModel,
+        groqVisionModel: config.settings.groqVisionModel,
+        localLlmBaseUrl: config.settings.localLlmBaseUrl,
+        localLlmModel: config.settings.localLlmModel,
         mockComments: config.settings.mockAiComments,
-        maxRequestsPerMinute: config.settings.geminiMaxRequestsPerMinute,
+        maxRequestsPerMinute: config.settings.aiMaxRequestsPerMinute,
     });
     const mode = process.argv[2];
 
     if (mode === 'test-comment') {
-        await runTestCommentMode(aiGenerator, accountSkillsCache);
+        await runTestCommentMode(aiGenerator, commentHistory, accountSkillsCache);
     } else if (mode === 'check-accounts') {
-        await runCheckAccountsMode(aiGenerator, accountSkillsCache);
+        await runCheckAccountsMode(aiGenerator, commentHistory, accountSkillsCache);
     } else if (mode === 'comment-urls') {
-        await runCommentUrlsMode(aiGenerator, accountSkillsCache);
+        await runCommentUrlsMode(aiGenerator, commentHistory, accountSkillsCache);
     } else if (mode === 'hashtag-comment') {
-        await runHashtagCommentMode(aiGenerator, accountSkillsCache);
+        await runHashtagCommentMode(aiGenerator, commentHistory, accountSkillsCache);
     } else {
-        await runUnifiedMode(aiGenerator, accountSkillsCache);
+        await runUnifiedMode(aiGenerator, commentHistory, accountSkillsCache);
     }
+
+    commentHistory.close();
 })();

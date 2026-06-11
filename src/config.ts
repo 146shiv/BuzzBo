@@ -52,12 +52,22 @@ export interface AccountConfig {
     targets?: string[];
 }
 
+export type AiProvider = 'gemini' | 'groq' | 'local';
+
 export interface SettingsConfig {
     headless: boolean;
     developerMode: boolean;
+    /** Which LLM backend to use for comment generation */
+    aiProvider: AiProvider;
     googleAiApiKey: string;
+    groqApiKey: string;
+    groqModel: string;
+    groqVisionModel: string;
+    /** OpenAI-compatible base URL, e.g. http://localhost:11434/v1 for Ollama */
+    localLlmBaseUrl: string;
+    localLlmModel: string;
     mockAiComments: boolean;
-    geminiMaxRequestsPerMinute: number;
+    aiMaxRequestsPerMinute: number;
     behavior: BehaviorConfig;
     defaultActionDelaySeconds: ActionDelayConfig;
     monitoringIntervalSeconds: ActionDelayConfig;
@@ -206,9 +216,15 @@ export const config: Config = {
     settings: {
         headless: true,
         developerMode: false,
+        aiProvider: 'groq',
         googleAiApiKey: 'YOUR_GOOGLE_AI_API_KEY_HERE',
+        groqApiKey: 'YOUR_GROQ_API_KEY_HERE',
+        groqModel: 'llama-3.3-70b-versatile',
+        groqVisionModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        localLlmBaseUrl: 'http://localhost:11434/v1',
+        localLlmModel: 'llama3.2',
         mockAiComments: false,
-        geminiMaxRequestsPerMinute: 15,
+        aiMaxRequestsPerMinute: 15,
         monitoringIntervalSeconds: {
             min: 360,
             max: 600,
@@ -223,7 +239,7 @@ export const config: Config = {
             max: 180,
         },
         hashtagSearch: {
-            maxPostsToScan: 24,
+            maxPostsToScan: 2,
             maxPostsToComment: 3,
             minLikes: 0,
             minComments: 0,
@@ -234,10 +250,12 @@ export const config: Config = {
     },
     accounts: [
         {
-            enabled: false,
-            username: 'studybo.app',
+            enabled: true,
+            username: 'studyboapp',
             loginMethod: 'manual',
             password: 'YOUR_PASSWORD_HERE',
+            // sourceMode: 'url_list',
+            // postUrlsFile: 'data/accounts/studybo.app/urls.txt',
             sourceMode: 'hashtag_list',
             hashtags: ['jee'],
             skillsFile: 'data/accounts/studybo.app/skills.txt',
