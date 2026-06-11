@@ -5,7 +5,10 @@
   "scripts": {
     "start": "ts-node src/main.ts",
     "test": "ts-node src/main.ts test-comment",
-    "checker": "ts-node src/main.ts check-accounts"
+    "checker": "ts-node src/main.ts check-accounts",
+    "comment-urls": "ts-node src/main.ts comment-urls",
+    "hashtag-comment": "ts-node src/main.ts hashtag-comment",
+    "postinstall": "playwright install chromium"
   },
   "keywords": [],
   "author": "",

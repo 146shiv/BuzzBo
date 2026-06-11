@@ -14,6 +14,16 @@ export interface BehaviorConfig {
     typingDelayMs: DelayConfig;
 }
 
+export interface HashtagSearchConfig {
+    maxPostsToScan: number;
+    maxPostsToComment: number;
+    minLikes: number;
+    minComments: number;
+    likeWeight: number;
+    commentWeight: number;
+    preferTopTab: boolean;
+}
+
 export interface AccountConfig {
     enabled: boolean;
     username: string;
@@ -27,9 +37,15 @@ export interface SettingsConfig {
     headless: boolean;
     developerMode: boolean;
     googleAiApiKey: string;
+    mockAiComments: boolean;
     behavior: BehaviorConfig;
     defaultActionDelaySeconds: ActionDelayConfig;
     monitoringIntervalSeconds: ActionDelayConfig;
+    commentUrlsFile: string;
+    hashtagsFile: string;
+    hashtagSearch: HashtagSearchConfig;
+    manualSessionCookieName: string;
+    manualLoginAiPromptHint?: string;
 }
 
 export interface Config {
@@ -42,6 +58,7 @@ export const config: Config = {
         headless: true,
         developerMode: false,
         googleAiApiKey: "YOUR_GOOGLE_AI_API_KEY_HERE",
+        mockAiComments: true,
         monitoringIntervalSeconds: {
             min: 360,
             max: 600,
@@ -55,6 +72,19 @@ export const config: Config = {
             min: 90,
             max: 180,
         },
+        commentUrlsFile: 'data/post_urls.txt',
+        hashtagsFile: 'data/hashtags.txt',
+        hashtagSearch: {
+            maxPostsToScan: 24,
+            maxPostsToComment: 3,
+            minLikes: 0,
+            minComments: 0,
+            likeWeight: 1,
+            commentWeight: 2,
+            preferTopTab: true,
+        },
+        manualSessionCookieName: 'manual_session',
+        manualLoginAiPromptHint: 'Write a supportive, authentic comment related to the post content.',
     },
     accounts: [
         {

@@ -175,7 +175,7 @@ async function initializeBotSession(
     accountToUse: AccountConfig,
     aiGenerator: AICommentGenerator,
     logger: Logger,
-    options: { headless?: boolean } = {}
+    options: { headless?: boolean; manualLogin?: boolean; waitForLoginConfirm?: () => Promise<void> } = {}
 ): Promise<{ browser: Browser; bot: InstagramBot } | null> {
     const cookiePath = path.join(cookiesDir, `${accountToUse.username}.json`);
     const fingerprintPath = path.join(fingerprintsDir, `${accountToUse.username}.json`);
@@ -242,7 +242,12 @@ async function initializeBotSession(
         );
 
         const bot = new InstagramBot(accountToUse, config.settings, pauseState, logger, aiGenerator);
-        await bot.init(context);
+        if (options.manualLogin) {
+            const waitForLogin = options.waitForLoginConfirm ?? waitForEnter;
+            await bot.initWithManualLogin(context, waitForLogin);
+        } else {
+            await bot.init(context);
+        }
         logger.success(`Bot session initialized for @${accountToUse.username}.`);
         return { browser, bot };
     } catch (error: any) {
@@ -323,8 +328,10 @@ async function runTestCommentMode(aiGenerator: AICommentGenerator) {
     globalLogger.header('----- TEST COMMENT MODE COMPLETE -----');
 }
 
-function waitForEnter() {
-    globalLogger.info(chalk.yellowBright('>>> Press [ENTER] in the terminal to proceed to the next account, or CTRL+C to exit. <<<'));
+function waitForEnter(message?: string) {
+    globalLogger.info(
+        chalk.yellowBright(message ?? '>>> Press [ENTER] in the terminal to proceed, or CTRL+C to exit. <<<')
+    );
     return new Promise<void>(resolve => {
         const onKeyPress = (str: string, key: any) => {
             if (key && key.name === 'return') {
@@ -334,6 +341,293 @@ function waitForEnter() {
         };
         process.stdin.on('keypress', onKeyPress);
     });
+}
+
+function waitForEnterCheckAccounts() {
+    return waitForEnter('>>> Press [ENTER] in the terminal to proceed to the next account, or CTRL+C to exit. <<<');
+}
+
+function isValidInstagramPostUrl(url: string): boolean {
+    return /instagram\.com\/(p|reel)\/[^/?#\s]+/i.test(url);
+}
+
+function normalizePostUrl(url: string): string {
+    let normalized = url.trim();
+    if (!normalized.startsWith('http')) {
+        normalized = `https://${normalized}`;
+    }
+    return normalized.split('?')[0].replace(/\/$/, '') + '/';
+}
+
+function loadHashtagsFromFile(relativeOrAbsolutePath: string): string[] {
+    const filePath = path.isAbsolute(relativeOrAbsolutePath)
+        ? relativeOrAbsolutePath
+        : path.join(baseDir, relativeOrAbsolutePath);
+
+    if (!fs.existsSync(filePath)) {
+        throw new Error(`Hashtags file not found: ${filePath}`);
+    }
+
+    const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
+    const hashtags: string[] = [];
+    const hashtagPattern = /^[a-zA-Z0-9_]+$/;
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (/^#\s/.test(trimmed)) continue;
+
+        const tag = trimmed.replace(/^#/, '').trim();
+        if (!hashtagPattern.test(tag)) {
+            globalLogger.warn(`Skipping invalid hashtag: ${trimmed}`);
+            continue;
+        }
+
+        hashtags.push(tag.toLowerCase());
+    }
+
+    return hashtags;
+}
+
+function loadCommentedShortcodesFromLog(): Set<string> {
+    const shortcodes = new Set<string>();
+    if (!fs.existsSync(globalLogPath)) return shortcodes;
+
+    const lines = fs.readFileSync(globalLogPath, 'utf-8').split('\n').slice(1);
+    for (const line of lines) {
+        if (!line.trim()) continue;
+        const parts = line.split(',');
+        if (parts.length < 3) continue;
+        const target = parts[2]?.trim();
+        if (target) shortcodes.add(target);
+    }
+
+    return shortcodes;
+}
+
+function loadPostUrlsFromFile(relativeOrAbsolutePath: string): string[] {
+    const filePath = path.isAbsolute(relativeOrAbsolutePath)
+        ? relativeOrAbsolutePath
+        : path.join(baseDir, relativeOrAbsolutePath);
+
+    if (!fs.existsSync(filePath)) {
+        throw new Error(`Post URLs file not found: ${filePath}`);
+    }
+
+    const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
+    const urls: string[] = [];
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+
+        if (!isValidInstagramPostUrl(trimmed)) {
+            globalLogger.warn(`Skipping invalid Instagram post URL: ${trimmed}`);
+            continue;
+        }
+
+        urls.push(normalizePostUrl(trimmed));
+    }
+
+    return urls;
+}
+
+async function runHashtagCommentMode(aiGenerator: AICommentGenerator) {
+    globalLogger.header('----- RUNNING IN HASHTAG COMMENT MODE -----');
+
+    const testUsername = process.argv[3];
+    let accountToUse: AccountConfig | undefined;
+
+    if (testUsername && !testUsername.includes('/') && !testUsername.endsWith('.txt')) {
+        globalLogger.info(`Attempting to run for specified account: @${testUsername}`);
+        accountToUse = config.accounts.find(acc => acc.username === testUsername);
+
+        if (!accountToUse) {
+            globalLogger.error(`Account with username "@${testUsername}" not found in config.ts.`);
+            return;
+        }
+        if (!accountToUse.enabled) {
+            globalLogger.error(`Account "@${testUsername}" is disabled in config.ts. Cannot run hashtag mode.`);
+            return;
+        }
+    } else {
+        globalLogger.info('No specific account provided. Using the first enabled account found in config.');
+        accountToUse = config.accounts.find(acc => acc.enabled);
+    }
+
+    if (!accountToUse) {
+        globalLogger.error('No enabled accounts found in config.ts. Cannot run hashtag mode.');
+        return;
+    }
+
+    const hashtagsFilePath =
+        process.argv[4] ??
+        (testUsername && (testUsername.includes('/') || testUsername.endsWith('.txt')) ? testUsername : undefined) ??
+        config.settings.hashtagsFile;
+
+    let hashtags: string[];
+    try {
+        hashtags = loadHashtagsFromFile(hashtagsFilePath);
+    } catch (error: any) {
+        globalLogger.error(error.message);
+        globalLogger.info(`Create ${config.settings.hashtagsFile} with one hashtag per line.`);
+        return;
+    }
+
+    if (hashtags.length === 0) {
+        globalLogger.error(`No valid hashtags found in ${hashtagsFilePath}.`);
+        return;
+    }
+
+    globalLogger.info(`Loaded ${hashtags.length} hashtag(s) from ${hashtagsFilePath}.`);
+    globalLogger.info(`Using account: @${accountToUse.username}`);
+
+    const sessionLogger = new Logger(accountToUse.username);
+    const session = await initializeBotSession(accountToUse, aiGenerator, sessionLogger, {
+        headless: config.settings.headless,
+    });
+
+    if (!session) {
+        globalLogger.error(`Failed to initialize browser session for @${accountToUse.username}.`);
+        return;
+    }
+
+    const { browser, bot } = session;
+    const searchConfig = config.settings.hashtagSearch;
+    const commentedShortcodes = loadCommentedShortcodesFromLog();
+    const seenShortcodes = new Set<string>(commentedShortcodes);
+
+    let totalSuccess = 0;
+    let totalSkipped = 0;
+    let totalFailed = 0;
+
+    try {
+        for (let h = 0; h < hashtags.length; h++) {
+            const hashtag = hashtags[h];
+            globalLogger.header(`----- Hashtag ${h + 1}/${hashtags.length}: #${hashtag} -----`);
+
+            let rankedPosts;
+            try {
+                rankedPosts = await bot.discoverAndRankHashtagPosts(hashtag, searchConfig, seenShortcodes);
+            } catch (error: any) {
+                globalLogger.error(`Failed to discover posts for #${hashtag}: ${error.message}`);
+                continue;
+            }
+
+            for (let i = 0; i < rankedPosts.length; i++) {
+                const candidate = rankedPosts[i];
+                globalLogger.header(
+                    `----- #${hashtag} post ${i + 1}/${rankedPosts.length}: ${candidate.url} -----`
+                );
+
+                if (seenShortcodes.has(candidate.shortcode)) {
+                    globalLogger.warn(`Already commented on ${candidate.shortcode}. Skipping.`);
+                    totalSkipped++;
+                    continue;
+                }
+
+                const result = await bot.runCommentTaskOnUrl(candidate.url, accountToUse.aiPromptHint);
+                seenShortcodes.add(candidate.shortcode);
+
+                if (result === 'SUCCESS') totalSuccess++;
+                else if (result === 'SKIPPED') totalSkipped++;
+                else totalFailed++;
+
+                if (i < rankedPosts.length - 1) {
+                    const waitMs = bot.getRandomActionDelayMs();
+                    globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next post...`);
+                    await delay(waitMs);
+                }
+            }
+
+            if (h < hashtags.length - 1) {
+                const waitMs = bot.getRandomActionDelayMs();
+                globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next hashtag...`);
+                await delay(waitMs);
+            }
+        }
+    } finally {
+        globalLogger.action('Closing browser...');
+        await browser.close();
+    }
+
+    globalLogger.header('----- HASHTAG COMMENT MODE COMPLETE -----');
+    globalLogger.success(`Success: ${totalSuccess} | Skipped: ${totalSkipped} | Failed: ${totalFailed}`);
+}
+
+async function runCommentUrlsMode(aiGenerator: AICommentGenerator) {
+    globalLogger.header('----- RUNNING IN COMMENT URLS MODE -----');
+
+    const urlsFilePath = process.argv[3] ?? config.settings.commentUrlsFile;
+    let postUrls: string[];
+
+    try {
+        postUrls = loadPostUrlsFromFile(urlsFilePath);
+    } catch (error: any) {
+        globalLogger.error(error.message);
+        globalLogger.info(`Create ${config.settings.commentUrlsFile} with one Instagram post/reel URL per line.`);
+        return;
+    }
+
+    if (postUrls.length === 0) {
+        globalLogger.error(`No valid post URLs found in ${urlsFilePath}.`);
+        return;
+    }
+
+    globalLogger.info(`Loaded ${postUrls.length} post URL(s) from ${urlsFilePath}.`);
+
+    const sessionName = config.settings.manualSessionCookieName;
+    const manualAccount: AccountConfig = {
+        enabled: true,
+        username: sessionName,
+        password: '',
+        aiPromptHint: config.settings.manualLoginAiPromptHint,
+        targets: [],
+    };
+
+    const sessionLogger = new Logger(sessionName);
+    const session = await initializeBotSession(manualAccount, aiGenerator, sessionLogger, {
+        headless: false,
+        manualLogin: true,
+        waitForLoginConfirm: () =>
+            waitForEnter('>>> Log in manually in the browser, then press [ENTER] here to continue. <<<'),
+    });
+
+    if (!session) {
+        globalLogger.error('Failed to initialize browser session for comment-urls mode.');
+        return;
+    }
+
+    const { browser, bot } = session;
+    const aiPromptHint = config.settings.manualLoginAiPromptHint;
+    let successCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    try {
+        for (let i = 0; i < postUrls.length; i++) {
+            const postUrl = postUrls[i];
+            globalLogger.header(`----- URL ${i + 1}/${postUrls.length}: ${postUrl} -----`);
+
+            const result = await bot.runCommentTaskOnUrl(postUrl, aiPromptHint);
+
+            if (result === 'SUCCESS') successCount++;
+            else if (result === 'SKIPPED') skippedCount++;
+            else failedCount++;
+
+            if (i < postUrls.length - 1) {
+                const waitMs = bot.getRandomActionDelayMs();
+                globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next URL...`);
+                await delay(waitMs);
+            }
+        }
+    } finally {
+        globalLogger.action('Closing browser...');
+        await browser.close();
+    }
+
+    globalLogger.header('----- COMMENT URLS MODE COMPLETE -----');
+    globalLogger.success(`Success: ${successCount} | Skipped: ${skippedCount} | Failed: ${failedCount}`);
 }
 
 async function runCheckAccountsMode(aiGenerator: AICommentGenerator) {
@@ -360,7 +654,7 @@ async function runCheckAccountsMode(aiGenerator: AICommentGenerator) {
             const { browser } = session;
             globalLogger.info('Browser window is open for manual inspection (login, popups, etc.).');
             
-            await waitForEnter();
+            await waitForEnterCheckAccounts();
 
             globalLogger.action(`Closing browser for @${account.username}...`);
             await browser.close();
@@ -573,11 +867,16 @@ async function runMonitorMode(aiGenerator: AICommentGenerator) {
     }
 
     if (
-        !config.settings.googleAiApiKey ||
-        config.settings.googleAiApiKey === 'YOUR_GOOGLE_AI_API_KEY_HERE'
+        !config.settings.mockAiComments &&
+        (!config.settings.googleAiApiKey ||
+            config.settings.googleAiApiKey === 'YOUR_GOOGLE_AI_API_KEY_HERE')
     ) {
         globalLogger.error('Google AI API key is not set in config.ts. Please add your key to continue.');
         process.exit(1);
+    }
+
+    if (config.settings.mockAiComments) {
+        globalLogger.warn('mockAiComments is ON — Gemini API calls are skipped; using placeholder comments.');
     }
 
     globalLogger.header('----- Account & Target Summary -----');
@@ -591,13 +890,19 @@ async function runMonitorMode(aiGenerator: AICommentGenerator) {
         );
     });
 
-    const aiGenerator = new AICommentGenerator(config.settings.googleAiApiKey);
+    const aiGenerator = new AICommentGenerator(config.settings.googleAiApiKey, {
+        mockComments: config.settings.mockAiComments,
+    });
     const mode = process.argv[2];
 
     if (mode === 'test-comment') {
         await runTestCommentMode(aiGenerator);
     } else if (mode === 'check-accounts') {
         await runCheckAccountsMode(aiGenerator);
+    } else if (mode === 'comment-urls') {
+        await runCommentUrlsMode(aiGenerator);
+    } else if (mode === 'hashtag-comment') {
+        await runHashtagCommentMode(aiGenerator);
     } else {
         await runMonitorMode(aiGenerator);
     }

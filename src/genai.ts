@@ -2,10 +2,21 @@ import { GoogleGenAI, GenerationConfig, Content, HarmCategory, HarmBlockThreshol
 
 export class AICommentGenerator {
     private apiKey: string;
+    private readonly mockComments: boolean;
     private generationConfig: GenerationConfig;
+    private mockCommentIndex = 0;
 
-    constructor(apiKey: string) {
-        if (!apiKey) {
+    private readonly mockCommentPool = [
+        'The framing in this post has a nice natural flow to it',
+        'There is a thoughtful quality to how this was put together',
+        'The visual tone here feels cohesive and well considered',
+        'This captures a moment with a clear sense of focus',
+        'The details in this post come through in a subtle way',
+    ];
+
+    constructor(apiKey: string, options: { mockComments?: boolean } = {}) {
+        this.mockComments = options.mockComments ?? false;
+        if (!this.mockComments && !apiKey) {
             throw new Error('Google AI API key is not provided in config.ts.');
         }
         this.apiKey = apiKey;
@@ -49,6 +60,18 @@ Post content: "${postText || 'The post has no text caption, so comment on the ph
 Write only the final comment text below. Do not add quotation marks around your response.`;
 
         return prompt;
+    }
+
+    private generateMockComment(postText: string, targetUsername: string): string {
+        const caption = postText.trim();
+        if (caption.length > 0) {
+            const snippet = caption.length > 40 ? `${caption.slice(0, 40)}...` : caption;
+            return `The way this post touches on ${snippet.toLowerCase()} feels thoughtfully done`;
+        }
+
+        const comment = this.mockCommentPool[this.mockCommentIndex % this.mockCommentPool.length];
+        this.mockCommentIndex++;
+        return comment;
     }
 
     private async fetchImageAsBase64(imageUrl: string): Promise<{ data: string; mimeType: string } | null> {
@@ -104,6 +127,12 @@ Write only the final comment text below. Do not add quotation marks around your 
         imageUrl?: string,
         videoUrl?: string
     ): Promise<string> {
+        if (this.mockComments) {
+            const comment = this.generateMockComment(postText, targetUsername);
+            console.log(`[AI_MOCK] Using mock comment for @${targetUsername}: "${comment}"`);
+            return comment;
+        }
+
         const promptText = this.buildPrompt(postText, targetUsername, promptHint);
         const contents: any[] = [];
 
@@ -137,7 +166,7 @@ Write only the final comment text below. Do not add quotation marks around your 
             const genAI = new GoogleGenAI({apiKey: this.apiKey});
 
             const result = await genAI.models.generateContent({
-                model: "gemini-2.5-flash-lite-preview-06-17",
+                model: 'gemini-2.0-flash',
                 contents: contents,
                 config: this.generationConfig,
             });
