@@ -30,6 +30,7 @@ export class InstagramBot {
     private readonly developerMode: boolean;
     private readonly logger: Logger;
     private readonly aiGenerator: AICommentGenerator;
+    private readonly channelSkillsContext?: string;
     private capturedVideoUrl: string | undefined = undefined;
     private isCapturingVideo: boolean = false;
     private readonly logsDir: string;
@@ -39,9 +40,11 @@ export class InstagramBot {
         globalSettings: SettingsConfig,
         pauseState: PauseState,
         logger: Logger,
-        aiGenerator: AICommentGenerator
+        aiGenerator: AICommentGenerator,
+        channelSkillsContext?: string
     ) {
         this.config = accountConfig;
+        this.channelSkillsContext = channelSkillsContext?.trim() || undefined;
         this.behavior = globalSettings.behavior;
         this.cookiePath = path.join(__dirname, '..', 'data', 'cookies', `${this.config.username}.json`);
         this.globalLogPath = path.join(__dirname, '..', 'data', 'logs', 'interaction_log.csv');
@@ -283,6 +286,12 @@ export class InstagramBot {
     }
 
     private async login() {
+        if (!this.config.password?.trim()) {
+            throw new Error(
+                `No password configured for @${this.config.username}. Set password or use loginMethod: 'manual'.`
+            );
+        }
+
         if ((await this.page.locator('input[name="username"]').count()) === 0) {
             this.logger.action('Navigating to login page...');
             await this.page.goto('https://www.instagram.com/accounts/login/?hl=en');
@@ -318,7 +327,7 @@ export class InstagramBot {
 
         await this.humanBehavior.randomDelay(500, 1500);
 
-        await this.humanBehavior.naturalTyping(passwordSelector, this.config.password, {
+        await this.humanBehavior.naturalTyping(passwordSelector, this.config.password!, {
             min: 100,
             max: 300,
             typoChance: 0.03,
@@ -476,7 +485,8 @@ export class InstagramBot {
             targetUsername,
             aiPromptHint,
             postImageUrl,
-            postVideoUrl
+            postVideoUrl,
+            this.channelSkillsContext
         );
         this.logger.success(`AI Generated Comment: "${aiComment}"`);
 

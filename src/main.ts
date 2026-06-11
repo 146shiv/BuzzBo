@@ -4,7 +4,14 @@ import * as path from 'path';
 import * as readline from 'readline';
 import chalk from 'chalk';
 import { InstagramBot, InteractionResult } from './bot';
-import { config, AccountConfig } from './config';
+import {
+    config,
+    AccountConfig,
+    normalizeAccount,
+    resolveAccountSettings,
+    validateEnabledAccounts,
+    PostSourceMode,
+} from './config';
 import { generateFingerprint, Fingerprint } from './fingerprint';
 import { Logger } from './logger';
 import { AICommentGenerator } from './genai';
@@ -171,11 +178,31 @@ async function getProfileStats(page: Page, username: string, logger: Logger): Pr
     }
 }
 
+function getSessionInitOptions(
+    account: AccountConfig,
+    overrides: { headless?: boolean; waitForLoginConfirm?: () => Promise<void> } = {}
+): { headless: boolean; manualLogin: boolean; waitForLoginConfirm?: () => Promise<void> } {
+    const normalized = normalizeAccount(account);
+    const isManual = normalized.loginMethod === 'manual';
+    return {
+        headless: overrides.headless ?? (isManual ? false : config.settings.headless),
+        manualLogin: isManual,
+        waitForLoginConfirm: isManual
+            ? (overrides.waitForLoginConfirm ??
+              (() =>
+                  waitForEnter(
+                      '>>> Log in manually in the browser, then press [ENTER] here to continue. <<<'
+                  )))
+            : undefined,
+    };
+}
+
 async function initializeBotSession(
     accountToUse: AccountConfig,
     aiGenerator: AICommentGenerator,
     logger: Logger,
-    options: { headless?: boolean; manualLogin?: boolean; waitForLoginConfirm?: () => Promise<void> } = {}
+    accountSkillsCache: Map<string, string | undefined>,
+    options: { headless?: boolean; forceManualLogin?: boolean; waitForLoginConfirm?: () => Promise<void> } = {}
 ): Promise<{ browser: Browser; bot: InstagramBot } | null> {
     const cookiePath = path.join(cookiesDir, `${accountToUse.username}.json`);
     const fingerprintPath = path.join(fingerprintsDir, `${accountToUse.username}.json`);
@@ -190,7 +217,9 @@ async function initializeBotSession(
         fs.writeFileSync(fingerprintPath, JSON.stringify(fingerprint, null, 2));
     }
 
-    const headless = options.headless === undefined ? config.settings.headless : options.headless;
+    const sessionOptions = getSessionInitOptions(accountToUse, options);
+    const headless = options.headless ?? sessionOptions.headless;
+    const useManualLogin = options.forceManualLogin ?? sessionOptions.manualLogin;
     const browser: Browser = await chromium.launch({ headless });
 
     try {
@@ -241,9 +270,17 @@ async function initializeBotSession(
             }
         );
 
-        const bot = new InstagramBot(accountToUse, config.settings, pauseState, logger, aiGenerator);
-        if (options.manualLogin) {
-            const waitForLogin = options.waitForLoginConfirm ?? waitForEnter;
+        const channelSkillsContext = accountSkillsCache.get(accountToUse.username);
+        const bot = new InstagramBot(
+            accountToUse,
+            config.settings,
+            pauseState,
+            logger,
+            aiGenerator,
+            channelSkillsContext
+        );
+        if (useManualLogin) {
+            const waitForLogin = options.waitForLoginConfirm ?? sessionOptions.waitForLoginConfirm ?? waitForEnter;
             await bot.initWithManualLogin(context, waitForLogin);
         } else {
             await bot.init(context);
@@ -261,10 +298,17 @@ async function launchBotForTask(
     accountToUse: AccountConfig,
     targetUsername: string,
     aiPromptHint: string | undefined,
-    aiGenerator: AICommentGenerator
+    aiGenerator: AICommentGenerator,
+    accountSkillsCache: Map<string, string | undefined>
 ): Promise<InteractionResult | 'LAUNCH_ERROR'> {
     const botLogger = new Logger(accountToUse.username);
-    const session = await initializeBotSession(accountToUse, aiGenerator, botLogger, { headless: config.settings.headless });
+    const session = await initializeBotSession(
+        accountToUse,
+        aiGenerator,
+        botLogger,
+        accountSkillsCache,
+        { headless: config.settings.headless }
+    );
 
     if (!session) {
         return 'LAUNCH_ERROR';
@@ -284,7 +328,10 @@ async function launchBotForTask(
     }
 }
 
-async function runTestCommentMode(aiGenerator: AICommentGenerator) {
+async function runTestCommentMode(
+    aiGenerator: AICommentGenerator,
+    accountSkillsCache: Map<string, string | undefined>
+) {
     globalLogger.header('----- RUNNING IN TEST COMMENT MODE -----');
 
     const testUsername = process.argv[3];
@@ -312,18 +359,43 @@ async function runTestCommentMode(aiGenerator: AICommentGenerator) {
         return;
     }
 
-    if (!accountToUse.targets || accountToUse.targets.length === 0) {
-        globalLogger.error(`Account @${accountToUse.username} has no targets defined. Cannot run test mode.`);
-        return;
+    const normalized = normalizeAccount(accountToUse);
+    globalLogger.info(`Using account: @${accountToUse.username} | sourceMode: ${normalized.sourceMode}`);
+
+    switch (normalized.sourceMode) {
+        case 'new_post_added_to_account': {
+            if (!accountToUse.targets || accountToUse.targets.length === 0) {
+                globalLogger.error(`Account @${accountToUse.username} has no targets defined.`);
+                return;
+            }
+            const targetUsername = accountToUse.targets[0];
+            globalLogger.info(`Targeting user: @${targetUsername}`);
+            globalLogger.info('An AI comment will be generated based on the latest post.');
+            await launchBotForTask(
+                accountToUse,
+                targetUsername,
+                accountToUse.aiPromptHint,
+                aiGenerator,
+                accountSkillsCache
+            );
+            break;
+        }
+        case 'url_list':
+            await runUrlListForAccount(accountToUse, aiGenerator, accountSkillsCache);
+            break;
+        case 'hashtag_list': {
+            const seenShortcodes = loadCommentedShortcodesFromLog();
+            await runHashtagScanForAccount(
+                accountToUse,
+                aiGenerator,
+                accountSkillsCache,
+                seenShortcodes
+            );
+            break;
+        }
+        default:
+            globalLogger.error(`Unknown sourceMode for @${accountToUse.username}.`);
     }
-
-    const targetUsername = accountToUse.targets[0];
-
-    globalLogger.info(`Using account: @${accountToUse.username}`);
-    globalLogger.info(`Targeting user: @${targetUsername}`);
-    globalLogger.info('An AI comment will be generated based on the latest post.');
-
-    await launchBotForTask(accountToUse, targetUsername, accountToUse.aiPromptHint, aiGenerator);
 
     globalLogger.header('----- TEST COMMENT MODE COMPLETE -----');
 }
@@ -359,36 +431,6 @@ function normalizePostUrl(url: string): string {
     return normalized.split('?')[0].replace(/\/$/, '') + '/';
 }
 
-function loadHashtagsFromFile(relativeOrAbsolutePath: string): string[] {
-    const filePath = path.isAbsolute(relativeOrAbsolutePath)
-        ? relativeOrAbsolutePath
-        : path.join(baseDir, relativeOrAbsolutePath);
-
-    if (!fs.existsSync(filePath)) {
-        throw new Error(`Hashtags file not found: ${filePath}`);
-    }
-
-    const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
-    const hashtags: string[] = [];
-    const hashtagPattern = /^[a-zA-Z0-9_]+$/;
-
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        if (/^#\s/.test(trimmed)) continue;
-
-        const tag = trimmed.replace(/^#/, '').trim();
-        if (!hashtagPattern.test(tag)) {
-            globalLogger.warn(`Skipping invalid hashtag: ${trimmed}`);
-            continue;
-        }
-
-        hashtags.push(tag.toLowerCase());
-    }
-
-    return hashtags;
-}
-
 function loadCommentedShortcodesFromLog(): Set<string> {
     const shortcodes = new Set<string>();
     if (!fs.existsSync(globalLogPath)) return shortcodes;
@@ -403,6 +445,252 @@ function loadCommentedShortcodesFromLog(): Set<string> {
     }
 
     return shortcodes;
+}
+
+function loadCommentGenerationSkills(relativeOrAbsolutePath: string): string | undefined {
+    const filePath = path.isAbsolute(relativeOrAbsolutePath)
+        ? relativeOrAbsolutePath
+        : path.join(baseDir, relativeOrAbsolutePath);
+
+    if (!fs.existsSync(filePath)) {
+        return undefined;
+    }
+
+    const content = fs.readFileSync(filePath, 'utf-8').trim();
+    return content.length > 0 ? content : undefined;
+}
+
+function buildAccountSkillsCache(): Map<string, string | undefined> {
+    const cache = new Map<string, string | undefined>();
+    const skillsByPath = new Map<string, string | undefined>();
+
+    const resolveSkillsForPath = (filePath: string): string | undefined => {
+        if (!skillsByPath.has(filePath)) {
+            skillsByPath.set(filePath, loadCommentGenerationSkills(filePath));
+        }
+        return skillsByPath.get(filePath);
+    };
+
+    for (const account of config.accounts) {
+        const skillsPath = resolveAccountSettings(account).skillsFile;
+        if (skillsPath) {
+            cache.set(account.username, resolveSkillsForPath(skillsPath));
+        }
+    }
+
+    return cache;
+}
+
+function getEnabledAccountsBySourceMode(sourceMode: PostSourceMode): AccountConfig[] {
+    return config.accounts.filter(acc => acc.enabled && normalizeAccount(acc).sourceMode === sourceMode);
+}
+
+function findEnabledAccount(username?: string): AccountConfig | undefined {
+    if (username) {
+        const account = config.accounts.find(acc => acc.username === username);
+        if (!account?.enabled) return undefined;
+        return account;
+    }
+    return config.accounts.find(acc => acc.enabled);
+}
+
+interface UrlListResult {
+    success: number;
+    skipped: number;
+    failed: number;
+}
+
+async function runUrlListForAccount(
+    account: AccountConfig,
+    aiGenerator: AICommentGenerator,
+    accountSkillsCache: Map<string, string | undefined>,
+    urlsFileOverride?: string
+): Promise<UrlListResult> {
+    const resolved = resolveAccountSettings(account);
+    const urlsFilePath = urlsFileOverride ?? resolved.postUrlsFile;
+    const result: UrlListResult = { success: 0, skipped: 0, failed: 0 };
+
+    if (!urlsFilePath) {
+        globalLogger.error(`@${account.username}: postUrlsFile is not configured.`);
+        return result;
+    }
+
+    let postUrls: string[];
+    try {
+        postUrls = loadPostUrlsFromFile(urlsFilePath);
+    } catch (error: any) {
+        globalLogger.error(`@${account.username}: ${error.message}`);
+        return result;
+    }
+
+    if (postUrls.length === 0) {
+        globalLogger.error(`@${account.username}: No valid post URLs found in ${urlsFilePath}.`);
+        return result;
+    }
+
+    globalLogger.info(`@${account.username}: Loaded ${postUrls.length} post URL(s) from ${urlsFilePath}.`);
+
+    const sessionLogger = new Logger(account.username);
+    const session = await initializeBotSession(
+        account,
+        aiGenerator,
+        sessionLogger,
+        accountSkillsCache
+    );
+
+    if (!session) {
+        globalLogger.error(`@${account.username}: Failed to initialize browser session.`);
+        return result;
+    }
+
+    const { browser, bot } = session;
+    try {
+        for (let i = 0; i < postUrls.length; i++) {
+            const postUrl = postUrls[i];
+            globalLogger.header(`----- @${account.username} URL ${i + 1}/${postUrls.length}: ${postUrl} -----`);
+
+            const commentResult = await bot.runCommentTaskOnUrl(postUrl, account.aiPromptHint);
+
+            if (commentResult === 'SUCCESS') result.success++;
+            else if (commentResult === 'SKIPPED') result.skipped++;
+            else result.failed++;
+
+            if (i < postUrls.length - 1) {
+                const waitMs = bot.getRandomActionDelayMs();
+                globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next URL...`);
+                await delay(waitMs);
+            }
+        }
+    } finally {
+        globalLogger.action(`Closing browser for @${account.username}...`);
+        await browser.close();
+    }
+
+    return result;
+}
+
+interface HashtagScanResult {
+    success: number;
+    skipped: number;
+    failed: number;
+}
+
+async function runHashtagScanForAccount(
+    account: AccountConfig,
+    aiGenerator: AICommentGenerator,
+    accountSkillsCache: Map<string, string | undefined>,
+    seenShortcodes: Set<string>
+): Promise<HashtagScanResult> {
+    const resolved = resolveAccountSettings(account);
+    const hashtags = resolved.hashtags;
+    const result: HashtagScanResult = { success: 0, skipped: 0, failed: 0 };
+
+    if (hashtags.length === 0) {
+        globalLogger.error(`@${account.username}: No hashtags configured in account config.`);
+        return result;
+    }
+
+    globalLogger.info(
+        `@${account.username}: Using ${hashtags.length} hashtag(s): ${hashtags.map(h => `#${h}`).join(', ')}`
+    );
+
+    const sessionLogger = new Logger(account.username);
+    const session = await initializeBotSession(
+        account,
+        aiGenerator,
+        sessionLogger,
+        accountSkillsCache
+    );
+
+    if (!session) {
+        globalLogger.error(`@${account.username}: Failed to initialize browser session.`);
+        return result;
+    }
+
+    const { browser, bot } = session;
+    const searchConfig = resolved.hashtagSearch;
+
+    try {
+        for (let h = 0; h < hashtags.length; h++) {
+            const hashtag = hashtags[h];
+            globalLogger.header(
+                `----- @${account.username} Hashtag ${h + 1}/${hashtags.length}: #${hashtag} -----`
+            );
+
+            let rankedPosts;
+            try {
+                rankedPosts = await bot.discoverAndRankHashtagPosts(hashtag, searchConfig, seenShortcodes);
+            } catch (error: any) {
+                globalLogger.error(`@${account.username}: Failed to discover posts for #${hashtag}: ${error.message}`);
+                continue;
+            }
+
+            for (let i = 0; i < rankedPosts.length; i++) {
+                const candidate = rankedPosts[i];
+                globalLogger.header(
+                    `----- @${account.username} #${hashtag} post ${i + 1}/${rankedPosts.length}: ${candidate.url} -----`
+                );
+
+                if (seenShortcodes.has(candidate.shortcode)) {
+                    globalLogger.warn(`Already commented on ${candidate.shortcode}. Skipping.`);
+                    result.skipped++;
+                    continue;
+                }
+
+                const commentResult = await bot.runCommentTaskOnUrl(candidate.url, account.aiPromptHint);
+                seenShortcodes.add(candidate.shortcode);
+
+                if (commentResult === 'SUCCESS') result.success++;
+                else if (commentResult === 'SKIPPED') result.skipped++;
+                else result.failed++;
+
+                if (i < rankedPosts.length - 1) {
+                    const waitMs = bot.getRandomActionDelayMs();
+                    globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next post...`);
+                    await delay(waitMs);
+                }
+            }
+
+            if (h < hashtags.length - 1) {
+                const waitMs = bot.getRandomActionDelayMs();
+                globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next hashtag...`);
+                await delay(waitMs);
+            }
+        }
+    } finally {
+        globalLogger.action(`Closing browser for @${account.username}...`);
+        await browser.close();
+    }
+
+    return result;
+}
+
+async function runUrlListPhase(
+    aiGenerator: AICommentGenerator,
+    accountSkillsCache: Map<string, string | undefined>
+) {
+    const urlAccounts = getEnabledAccountsBySourceMode('url_list');
+    if (urlAccounts.length === 0) {
+        globalLogger.info('No enabled url_list accounts. Skipping URL phase.');
+        return;
+    }
+
+    globalLogger.header('----- Phase 1: URL List (once per invocation) -----');
+    let totalSuccess = 0;
+    let totalSkipped = 0;
+    let totalFailed = 0;
+
+    for (const account of urlAccounts) {
+        globalLogger.header(`----- URL list for @${account.username} -----`);
+        const result = await runUrlListForAccount(account, aiGenerator, accountSkillsCache);
+        totalSuccess += result.success;
+        totalSkipped += result.skipped;
+        totalFailed += result.failed;
+    }
+
+    globalLogger.success(
+        `URL phase complete. Success: ${totalSuccess} | Skipped: ${totalSkipped} | Failed: ${totalFailed}`
+    );
 }
 
 function loadPostUrlsFromFile(relativeOrAbsolutePath: string): string[] {
@@ -432,205 +720,108 @@ function loadPostUrlsFromFile(relativeOrAbsolutePath: string): string[] {
     return urls;
 }
 
-async function runHashtagCommentMode(aiGenerator: AICommentGenerator) {
-    globalLogger.header('----- RUNNING IN HASHTAG COMMENT MODE -----');
+async function runHashtagCommentMode(
+    aiGenerator: AICommentGenerator,
+    accountSkillsCache: Map<string, string | undefined>
+) {
+    globalLogger.warn(
+        'hashtag-comment mode is deprecated. Use npm start with sourceMode: hashtag_list accounts instead.'
+    );
+    globalLogger.header('----- RUNNING IN HASHTAG COMMENT MODE (shortcut) -----');
 
-    const testUsername = process.argv[3];
-    let accountToUse: AccountConfig | undefined;
+    const cliArg = process.argv[3];
+    let accounts = getEnabledAccountsBySourceMode('hashtag_list');
 
-    if (testUsername && !testUsername.includes('/') && !testUsername.endsWith('.txt')) {
-        globalLogger.info(`Attempting to run for specified account: @${testUsername}`);
-        accountToUse = config.accounts.find(acc => acc.username === testUsername);
-
-        if (!accountToUse) {
-            globalLogger.error(`Account with username "@${testUsername}" not found in config.ts.`);
+    if (cliArg) {
+        const account = findEnabledAccount(cliArg);
+        if (!account || normalizeAccount(account).sourceMode !== 'hashtag_list') {
+            globalLogger.error(`Enabled hashtag_list account "@${cliArg}" not found in config.ts.`);
             return;
         }
-        if (!accountToUse.enabled) {
-            globalLogger.error(`Account "@${testUsername}" is disabled in config.ts. Cannot run hashtag mode.`);
-            return;
-        }
-    } else {
-        globalLogger.info('No specific account provided. Using the first enabled account found in config.');
-        accountToUse = config.accounts.find(acc => acc.enabled);
+        accounts = [account];
     }
 
-    if (!accountToUse) {
-        globalLogger.error('No enabled accounts found in config.ts. Cannot run hashtag mode.');
+    if (accounts.length === 0) {
+        globalLogger.error('No enabled hashtag_list accounts found in config.ts.');
         return;
     }
 
-    const hashtagsFilePath =
-        process.argv[4] ??
-        (testUsername && (testUsername.includes('/') || testUsername.endsWith('.txt')) ? testUsername : undefined) ??
-        config.settings.hashtagsFile;
-
-    let hashtags: string[];
-    try {
-        hashtags = loadHashtagsFromFile(hashtagsFilePath);
-    } catch (error: any) {
-        globalLogger.error(error.message);
-        globalLogger.info(`Create ${config.settings.hashtagsFile} with one hashtag per line.`);
-        return;
-    }
-
-    if (hashtags.length === 0) {
-        globalLogger.error(`No valid hashtags found in ${hashtagsFilePath}.`);
-        return;
-    }
-
-    globalLogger.info(`Loaded ${hashtags.length} hashtag(s) from ${hashtagsFilePath}.`);
-    globalLogger.info(`Using account: @${accountToUse.username}`);
-
-    const sessionLogger = new Logger(accountToUse.username);
-    const session = await initializeBotSession(accountToUse, aiGenerator, sessionLogger, {
-        headless: config.settings.headless,
-    });
-
-    if (!session) {
-        globalLogger.error(`Failed to initialize browser session for @${accountToUse.username}.`);
-        return;
-    }
-
-    const { browser, bot } = session;
-    const searchConfig = config.settings.hashtagSearch;
-    const commentedShortcodes = loadCommentedShortcodesFromLog();
-    const seenShortcodes = new Set<string>(commentedShortcodes);
-
+    const seenShortcodes = loadCommentedShortcodesFromLog();
     let totalSuccess = 0;
     let totalSkipped = 0;
     let totalFailed = 0;
 
-    try {
-        for (let h = 0; h < hashtags.length; h++) {
-            const hashtag = hashtags[h];
-            globalLogger.header(`----- Hashtag ${h + 1}/${hashtags.length}: #${hashtag} -----`);
-
-            let rankedPosts;
-            try {
-                rankedPosts = await bot.discoverAndRankHashtagPosts(hashtag, searchConfig, seenShortcodes);
-            } catch (error: any) {
-                globalLogger.error(`Failed to discover posts for #${hashtag}: ${error.message}`);
-                continue;
-            }
-
-            for (let i = 0; i < rankedPosts.length; i++) {
-                const candidate = rankedPosts[i];
-                globalLogger.header(
-                    `----- #${hashtag} post ${i + 1}/${rankedPosts.length}: ${candidate.url} -----`
-                );
-
-                if (seenShortcodes.has(candidate.shortcode)) {
-                    globalLogger.warn(`Already commented on ${candidate.shortcode}. Skipping.`);
-                    totalSkipped++;
-                    continue;
-                }
-
-                const result = await bot.runCommentTaskOnUrl(candidate.url, accountToUse.aiPromptHint);
-                seenShortcodes.add(candidate.shortcode);
-
-                if (result === 'SUCCESS') totalSuccess++;
-                else if (result === 'SKIPPED') totalSkipped++;
-                else totalFailed++;
-
-                if (i < rankedPosts.length - 1) {
-                    const waitMs = bot.getRandomActionDelayMs();
-                    globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next post...`);
-                    await delay(waitMs);
-                }
-            }
-
-            if (h < hashtags.length - 1) {
-                const waitMs = bot.getRandomActionDelayMs();
-                globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next hashtag...`);
-                await delay(waitMs);
-            }
-        }
-    } finally {
-        globalLogger.action('Closing browser...');
-        await browser.close();
+    for (const account of accounts) {
+        const result = await runHashtagScanForAccount(
+            account,
+            aiGenerator,
+            accountSkillsCache,
+            seenShortcodes
+        );
+        totalSuccess += result.success;
+        totalSkipped += result.skipped;
+        totalFailed += result.failed;
     }
 
     globalLogger.header('----- HASHTAG COMMENT MODE COMPLETE -----');
     globalLogger.success(`Success: ${totalSuccess} | Skipped: ${totalSkipped} | Failed: ${totalFailed}`);
 }
 
-async function runCommentUrlsMode(aiGenerator: AICommentGenerator) {
-    globalLogger.header('----- RUNNING IN COMMENT URLS MODE -----');
+async function runCommentUrlsMode(
+    aiGenerator: AICommentGenerator,
+    accountSkillsCache: Map<string, string | undefined>
+) {
+    globalLogger.warn(
+        'comment-urls mode is deprecated. Use npm start with sourceMode: url_list accounts instead.'
+    );
+    globalLogger.header('----- RUNNING IN COMMENT URLS MODE (shortcut) -----');
 
-    const urlsFilePath = process.argv[3] ?? config.settings.commentUrlsFile;
-    let postUrls: string[];
+    const cliArg = process.argv[3];
+    let accounts = getEnabledAccountsBySourceMode('url_list');
+    let urlsFileOverride: string | undefined;
 
-    try {
-        postUrls = loadPostUrlsFromFile(urlsFilePath);
-    } catch (error: any) {
-        globalLogger.error(error.message);
-        globalLogger.info(`Create ${config.settings.commentUrlsFile} with one Instagram post/reel URL per line.`);
-        return;
-    }
-
-    if (postUrls.length === 0) {
-        globalLogger.error(`No valid post URLs found in ${urlsFilePath}.`);
-        return;
-    }
-
-    globalLogger.info(`Loaded ${postUrls.length} post URL(s) from ${urlsFilePath}.`);
-
-    const sessionName = config.settings.manualSessionCookieName;
-    const manualAccount: AccountConfig = {
-        enabled: true,
-        username: sessionName,
-        password: '',
-        aiPromptHint: config.settings.manualLoginAiPromptHint,
-        targets: [],
-    };
-
-    const sessionLogger = new Logger(sessionName);
-    const session = await initializeBotSession(manualAccount, aiGenerator, sessionLogger, {
-        headless: false,
-        manualLogin: true,
-        waitForLoginConfirm: () =>
-            waitForEnter('>>> Log in manually in the browser, then press [ENTER] here to continue. <<<'),
-    });
-
-    if (!session) {
-        globalLogger.error('Failed to initialize browser session for comment-urls mode.');
-        return;
-    }
-
-    const { browser, bot } = session;
-    const aiPromptHint = config.settings.manualLoginAiPromptHint;
-    let successCount = 0;
-    let skippedCount = 0;
-    let failedCount = 0;
-
-    try {
-        for (let i = 0; i < postUrls.length; i++) {
-            const postUrl = postUrls[i];
-            globalLogger.header(`----- URL ${i + 1}/${postUrls.length}: ${postUrl} -----`);
-
-            const result = await bot.runCommentTaskOnUrl(postUrl, aiPromptHint);
-
-            if (result === 'SUCCESS') successCount++;
-            else if (result === 'SKIPPED') skippedCount++;
-            else failedCount++;
-
-            if (i < postUrls.length - 1) {
-                const waitMs = bot.getRandomActionDelayMs();
-                globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next URL...`);
-                await delay(waitMs);
+    if (cliArg) {
+        if (cliArg.includes('/') || cliArg.endsWith('.txt')) {
+            urlsFileOverride = cliArg;
+        } else {
+            const account = findEnabledAccount(cliArg);
+            if (!account || normalizeAccount(account).sourceMode !== 'url_list') {
+                globalLogger.error(`Enabled url_list account "@${cliArg}" not found in config.ts.`);
+                return;
             }
+            accounts = [account];
         }
-    } finally {
-        globalLogger.action('Closing browser...');
-        await browser.close();
+    }
+
+    if (accounts.length === 0) {
+        globalLogger.error('No enabled url_list accounts found in config.ts.');
+        return;
+    }
+
+    let totalSuccess = 0;
+    let totalSkipped = 0;
+    let totalFailed = 0;
+
+    for (const account of accounts) {
+        const result = await runUrlListForAccount(
+            account,
+            aiGenerator,
+            accountSkillsCache,
+            urlsFileOverride
+        );
+        totalSuccess += result.success;
+        totalSkipped += result.skipped;
+        totalFailed += result.failed;
     }
 
     globalLogger.header('----- COMMENT URLS MODE COMPLETE -----');
-    globalLogger.success(`Success: ${successCount} | Skipped: ${skippedCount} | Failed: ${failedCount}`);
+    globalLogger.success(`Success: ${totalSuccess} | Skipped: ${totalSkipped} | Failed: ${totalFailed}`);
 }
 
-async function runCheckAccountsMode(aiGenerator: AICommentGenerator) {
+async function runCheckAccountsMode(
+    aiGenerator: AICommentGenerator,
+    accountSkillsCache: Map<string, string | undefined>
+) {
     globalLogger.header('----- RUNNING IN ACCOUNT CHECK MODE -----');
 
     const enabledAccounts = config.accounts.filter(acc => acc.enabled);
@@ -646,7 +837,13 @@ async function runCheckAccountsMode(aiGenerator: AICommentGenerator) {
         globalLogger.header(`----- Checking account: @${account.username} -----`);
         const accountLogger = new Logger(account.username);
         
-        const session = await initializeBotSession(account, aiGenerator, accountLogger, { headless: false });
+        const session = await initializeBotSession(
+            account,
+            aiGenerator,
+            accountLogger,
+            accountSkillsCache,
+            { headless: false }
+        );
 
         if (!session) {
             globalLogger.warn(`Failed to initialize session for @${account.username}. It might be locked or require verification. This account will be skipped.`);
@@ -668,19 +865,18 @@ async function runCheckAccountsMode(aiGenerator: AICommentGenerator) {
     globalLogger.header('----- ACCOUNT CHECK MODE COMPLETE -----');
 }
 
-async function runMonitorMode(aiGenerator: AICommentGenerator) {
-    globalLogger.header('----- Instagram New Post Commenter Bot (Monitor Mode) -----');
+async function runMonitorLoop(
+    aiGenerator: AICommentGenerator,
+    accountSkillsCache: Map<string, string | undefined>
+) {
+    globalLogger.header('----- Phase 2: Monitor Loop -----');
+
+    const monitorAccounts = getEnabledAccountsBySourceMode('new_post_added_to_account');
+    const hashtagAccounts = getEnabledAccountsBySourceMode('hashtag_list');
 
     const targetMap = new Map<string, { account: AccountConfig }[]>();
-    const enabledAccounts = config.accounts.filter(acc => acc.enabled);
-
-    if (enabledAccounts.length === 0) {
-        globalLogger.error('No enabled accounts found in config.ts. Exiting.');
-        return;
-    }
-
-    enabledAccounts.forEach(account => {
-        account.targets.forEach(targetUsername => {
+    monitorAccounts.forEach(account => {
+        (account.targets ?? []).forEach(targetUsername => {
             if (!targetMap.has(targetUsername)) {
                 targetMap.set(targetUsername, []);
             }
@@ -702,126 +898,165 @@ async function runMonitorMode(aiGenerator: AICommentGenerator) {
         globalLogger.header('----- SHARED TARGET WARNING -----');
         globalLogger.warn('The following targets are shared by multiple accounts:');
         for (const shared of sharedTargets) {
-            globalLogger.warn(`  - Target: ${chalk.cyan(shared.target)} | Accounts: ${chalk.yellow(shared.accounts.join(', '))}`);
+            globalLogger.warn(
+                `  - Target: ${chalk.cyan(shared.target)} | Accounts: ${chalk.yellow(shared.accounts.join(', '))}`
+            );
         }
-        globalLogger.warn('This is not an error, but be aware that all listed accounts will attempt to comment sequentially on new posts from these targets.');
+        globalLogger.warn(
+            'This is not an error, but be aware that all listed accounts will attempt to comment sequentially on new posts from these targets.'
+        );
     }
 
-    if (targetMap.size === 0) {
-        globalLogger.error('No enabled accounts with targets found in config.ts. Exiting.');
-        return;
+    if (targetMap.size > 0) {
+        globalLogger.info(`Monitoring ${targetMap.size} unique targets across new_post_added_to_account accounts.`);
+    }
+    if (hashtagAccounts.length > 0) {
+        globalLogger.info(`Hashtag scanning enabled for ${hashtagAccounts.length} account(s) each cycle.`);
     }
 
-    globalLogger.info(`Monitoring ${targetMap.size} unique targets across all enabled accounts.`);
+    let monitorSession: { browser: Browser; bot: InstagramBot } | null = null;
+    if (targetMap.size > 0) {
+        const monitorAccount = monitorAccounts[0];
+        globalLogger.info(`Using account @${monitorAccount.username} for profile stat checks.`);
+        const monitorLogger = new Logger(`${monitorAccount.username}-MONITOR`);
 
-    const monitorAccount = enabledAccounts[0];
-    globalLogger.info(`Using account @${monitorAccount.username} for all monitoring checks.`);
-    const monitorLogger = new Logger(`${monitorAccount.username}-MONITOR`);
-    
-    const monitorSession = await initializeBotSession(monitorAccount, aiGenerator, monitorLogger, { headless: config.settings.headless });
-    if (!monitorSession) {
-        globalLogger.error(`Could not initialize monitor account @${monitorAccount.username}. Exiting.`);
-        return;
+        monitorSession = await initializeBotSession(
+            monitorAccount,
+            aiGenerator,
+            monitorLogger,
+            accountSkillsCache,
+            { headless: config.settings.headless }
+        );
+
+        if (!monitorSession) {
+            globalLogger.error(`Could not initialize monitor account @${monitorAccount.username}. Exiting.`);
+            return;
+        }
     }
-    const { browser: monitorBrowser, bot: monitorBot } = monitorSession;
+
+    const profileStats = loadProfileStatsFromCsv();
+    const seenShortcodes = loadCommentedShortcodesFromLog();
 
     try {
-        const monitorPage = monitorBot.getPage();
-        const profileStats = loadProfileStatsFromCsv();
-
         while (true) {
-            globalLogger.header(`----- Starting Monitoring Cycle -----`);
+            globalLogger.header('----- Starting Monitoring Cycle -----');
 
-            const monitoredUsernames = Array.from(targetMap.keys());
+            if (monitorSession && targetMap.size > 0) {
+                const monitorPage = monitorSession.bot.getPage();
+                const monitoredUsernames = Array.from(targetMap.keys());
 
-            for (const targetUsername of monitoredUsernames) {
-                globalLogger.info(`Checking target: @${targetUsername}`);
-                const currentStats = await getProfileStats(monitorPage, targetUsername, globalLogger);
+                for (const targetUsername of monitoredUsernames) {
+                    globalLogger.info(`Checking target: @${targetUsername}`);
+                    const currentStats = await getProfileStats(monitorPage, targetUsername, globalLogger);
 
-                const interProfileDelay = 20000 + Math.random() * 20000;
-                globalLogger.debug(`Waiting ~${Math.round(interProfileDelay / 1000)}s before next check.`);
-                await delay(interProfileDelay);
+                    const interProfileDelay = 20000 + Math.random() * 20000;
+                    globalLogger.debug(`Waiting ~${Math.round(interProfileDelay / 1000)}s before next check.`);
+                    await delay(interProfileDelay);
 
-                if (currentStats === null) {
-                    globalLogger.warn(`Could not get profile stats for @${targetUsername}. Skipping.`);
-                    continue;
-                }
+                    if (currentStats === null) {
+                        globalLogger.warn(`Could not get profile stats for @${targetUsername}. Skipping.`);
+                        continue;
+                    }
 
-                const previousStats = profileStats[targetUsername];
-                const { postCount: currentPostCount, followerCount: currentFollowerCount } = currentStats;
+                    const previousStats = profileStats[targetUsername];
+                    const { postCount: currentPostCount, followerCount: currentFollowerCount } = currentStats;
 
-                if (previousStats === undefined) {
-                    globalLogger.info(
-                        `Initialized @${targetUsername} with ${currentPostCount} posts and ${currentFollowerCount} followers. Will monitor for changes.`
-                    );
-                    profileStats[targetUsername] = currentStats;
-                    await updateProfileStatsInCsv(targetUsername, currentPostCount, currentFollowerCount);
-                } else {
-                    const { postCount: previousPostCount, followerCount: previousFollowerCount } = previousStats;
-
-                    if (currentPostCount > previousPostCount) {
-                        globalLogger.success(
-                            `>>> NEW POST DETECTED for @${targetUsername}! Posts: ${previousPostCount} -> ${currentPostCount} <<<`
-                        );
-
-                        const tasks = targetMap.get(targetUsername) || [];
-                        if (tasks.length > 0) {
-                            globalLogger.action(`Found ${tasks.length} account(s) tasked to comment on this post.`);
-                        }
-
-                        let allTasksSucceededOrSkipped = true;
-
-                        for (const task of tasks) {
-                            globalLogger.action(`--- Starting task for account: @${task.account.username} ---`);
-                            const result = await launchBotForTask(
-                                task.account,
-                                targetUsername,
-                                task.account.aiPromptHint,
-                                aiGenerator
-                            );
-
-                            if (result === 'FAILED' || result === 'LAUNCH_ERROR') {
-                                allTasksSucceededOrSkipped = false;
-                                globalLogger.warn(`Task for @${task.account.username} on @${targetUsername} failed.`);
-                            }
-
-                            if (tasks.length > 1) {
-                                const interBotDelay = 15000 + Math.random() * 25000;
-                                globalLogger.info(
-                                    `Waiting for ~${Math.round(interBotDelay / 1000)}s before next bot launch...`
-                                );
-                                await delay(interBotDelay);
-                            }
-                        }
-
-                        if (allTasksSucceededOrSkipped) {
-                            globalLogger.success(
-                                `All tasks for @${targetUsername} succeeded. Updating stats to P:${currentPostCount}, F:${currentFollowerCount}.`
-                            );
-                            profileStats[targetUsername] = currentStats;
-                            await updateProfileStatsInCsv(targetUsername, currentPostCount, currentFollowerCount);
-                        } else {
-                            globalLogger.warn(
-                                `One or more tasks failed for @${targetUsername}. Stats will NOT be updated to allow a retry on the next cycle.`
-                            );
-                        }
-                    } else if (currentPostCount < previousPostCount) {
-                        globalLogger.warn(
-                            `Posts were deleted for @${targetUsername}. Old: ${previousPostCount}, New: ${currentPostCount}. Stats updated.`
-                        );
-                        profileStats[targetUsername] = currentStats;
-                        await updateProfileStatsInCsv(targetUsername, currentPostCount, currentFollowerCount);
-                    } else if (currentFollowerCount !== previousFollowerCount) {
+                    if (previousStats === undefined) {
                         globalLogger.info(
-                            `Follower count changed for @${targetUsername}. Old: ${previousFollowerCount}, New: ${currentFollowerCount}. Stats updated.`
+                            `Initialized @${targetUsername} with ${currentPostCount} posts and ${currentFollowerCount} followers. Will monitor for changes.`
                         );
                         profileStats[targetUsername] = currentStats;
                         await updateProfileStatsInCsv(targetUsername, currentPostCount, currentFollowerCount);
                     } else {
-                        globalLogger.info(
-                            `No new posts or follower changes for @${targetUsername}. Posts: ${currentPostCount}, Followers: ${currentFollowerCount}.`
-                        );
+                        const { postCount: previousPostCount, followerCount: previousFollowerCount } = previousStats;
+
+                        if (currentPostCount > previousPostCount) {
+                            globalLogger.success(
+                                `>>> NEW POST DETECTED for @${targetUsername}! Posts: ${previousPostCount} -> ${currentPostCount} <<<`
+                            );
+
+                            const tasks = targetMap.get(targetUsername) || [];
+                            if (tasks.length > 0) {
+                                globalLogger.action(
+                                    `Found ${tasks.length} account(s) tasked to comment on this post.`
+                                );
+                            }
+
+                            let allTasksSucceededOrSkipped = true;
+
+                            for (const task of tasks) {
+                                globalLogger.action(
+                                    `--- Starting task for account: @${task.account.username} ---`
+                                );
+                                const result = await launchBotForTask(
+                                    task.account,
+                                    targetUsername,
+                                    task.account.aiPromptHint,
+                                    aiGenerator,
+                                    accountSkillsCache
+                                );
+
+                                if (result === 'FAILED' || result === 'LAUNCH_ERROR') {
+                                    allTasksSucceededOrSkipped = false;
+                                    globalLogger.warn(
+                                        `Task for @${task.account.username} on @${targetUsername} failed.`
+                                    );
+                                }
+
+                                if (tasks.length > 1) {
+                                    const interBotDelay = 15000 + Math.random() * 25000;
+                                    globalLogger.info(
+                                        `Waiting for ~${Math.round(interBotDelay / 1000)}s before next bot launch...`
+                                    );
+                                    await delay(interBotDelay);
+                                }
+                            }
+
+                            if (allTasksSucceededOrSkipped) {
+                                globalLogger.success(
+                                    `All tasks for @${targetUsername} succeeded. Updating stats to P:${currentPostCount}, F:${currentFollowerCount}.`
+                                );
+                                profileStats[targetUsername] = currentStats;
+                                await updateProfileStatsInCsv(
+                                    targetUsername,
+                                    currentPostCount,
+                                    currentFollowerCount
+                                );
+                            } else {
+                                globalLogger.warn(
+                                    `One or more tasks failed for @${targetUsername}. Stats will NOT be updated to allow a retry on the next cycle.`
+                                );
+                            }
+                        } else if (currentPostCount < previousPostCount) {
+                            globalLogger.warn(
+                                `Posts were deleted for @${targetUsername}. Old: ${previousPostCount}, New: ${currentPostCount}. Stats updated.`
+                            );
+                            profileStats[targetUsername] = currentStats;
+                            await updateProfileStatsInCsv(targetUsername, currentPostCount, currentFollowerCount);
+                        } else if (currentFollowerCount !== previousFollowerCount) {
+                            globalLogger.info(
+                                `Follower count changed for @${targetUsername}. Old: ${previousFollowerCount}, New: ${currentFollowerCount}. Stats updated.`
+                            );
+                            profileStats[targetUsername] = currentStats;
+                            await updateProfileStatsInCsv(targetUsername, currentPostCount, currentFollowerCount);
+                        } else {
+                            globalLogger.info(
+                                `No new posts or follower changes for @${targetUsername}. Posts: ${currentPostCount}, Followers: ${currentFollowerCount}.`
+                            );
+                        }
                     }
+                }
+            }
+
+            if (hashtagAccounts.length > 0) {
+                globalLogger.header('----- Hashtag Scanning -----');
+                for (const account of hashtagAccounts) {
+                    await runHashtagScanForAccount(
+                        account,
+                        aiGenerator,
+                        accountSkillsCache,
+                        seenShortcodes
+                    );
                 }
             }
 
@@ -833,12 +1068,41 @@ async function runMonitorMode(aiGenerator: AICommentGenerator) {
             await delay(waitSeconds * 1000);
         }
     } catch (error: any) {
-        globalLogger.error(`A critical error occurred in monitor mode: ${error.message}`);
+        globalLogger.error(`A critical error occurred in monitor loop: ${error.message}`);
         throw error;
     } finally {
-        globalLogger.info('Closing monitor browser...');
-        await monitorBrowser.close();
+        if (monitorSession) {
+            globalLogger.info('Closing monitor browser...');
+            await monitorSession.browser.close();
+        }
     }
+}
+
+async function runUnifiedMode(
+    aiGenerator: AICommentGenerator,
+    accountSkillsCache: Map<string, string | undefined>
+) {
+    globalLogger.header('----- Instagram AI Commenter Bot (Unified Mode) -----');
+
+    const enabledAccounts = config.accounts.filter(acc => acc.enabled);
+    if (enabledAccounts.length === 0) {
+        globalLogger.error('No enabled accounts found in config.ts. Exiting.');
+        return;
+    }
+
+    await runUrlListPhase(aiGenerator, accountSkillsCache);
+
+    const hasMonitorWork = enabledAccounts.some(acc => {
+        const mode = normalizeAccount(acc).sourceMode;
+        return mode === 'new_post_added_to_account' || mode === 'hashtag_list';
+    });
+
+    if (!hasMonitorWork) {
+        globalLogger.info('No monitor or hashtag accounts enabled. Exiting after URL phase.');
+        return;
+    }
+
+    await runMonitorLoop(aiGenerator, accountSkillsCache);
 }
 
 (async () => {
@@ -879,31 +1143,64 @@ async function runMonitorMode(aiGenerator: AICommentGenerator) {
         globalLogger.warn('mockAiComments is ON — Gemini API calls are skipped; using placeholder comments.');
     }
 
-    globalLogger.header('----- Account & Target Summary -----');
+    const enabledAccounts = config.accounts.filter(acc => acc.enabled);
+    if (enabledAccounts.length > 0) {
+        try {
+            validateEnabledAccounts(config.accounts);
+        } catch (error: any) {
+            globalLogger.error(error.message);
+            process.exit(1);
+        }
+    }
+
+    globalLogger.header('----- Account Summary -----');
     config.accounts.forEach(account => {
-        const targetCount = account.targets.length;
+        const normalized = normalizeAccount(account);
+        const resolved = resolveAccountSettings(account);
         const enabledStatus = account.enabled ? chalk.greenBright('Yes') : chalk.redBright('No');
+        const modeDetail =
+            normalized.sourceMode === 'new_post_added_to_account'
+                ? `Targets: ${chalk.yellow(String(account.targets?.length ?? 0))}`
+                : normalized.sourceMode === 'url_list'
+                  ? `URLs: ${chalk.yellow(resolved.postUrlsFile ?? 'not set')}`
+                  : `Hashtags: ${chalk.yellow(resolved.hashtags.map(h => `#${h}`).join(', ') || 'not set')}`;
+
         globalLogger.action(
-            `Account: ${chalk.cyan(account.username)} | Targets: ${chalk.yellow(
-                targetCount
-            )} | Enabled: ${enabledStatus}`
+            `Account: ${chalk.cyan(account.username)} | Enabled: ${enabledStatus} | Login: ${normalized.loginMethod} | Mode: ${normalized.sourceMode} | Skills: ${chalk.yellow(resolved.skillsFile || 'not set')} | ${modeDetail}`
         );
     });
 
+    const accountSkillsCache = buildAccountSkillsCache();
+    const enabledWithSkills = config.accounts.filter(
+        acc => acc.enabled && accountSkillsCache.get(acc.username)
+    );
+    const enabledMissingSkills = config.accounts.filter(
+        acc => acc.enabled && !accountSkillsCache.get(acc.username)
+    );
+    if (enabledWithSkills.length > 0) {
+        globalLogger.info(`Skills loaded for ${enabledWithSkills.length} enabled account(s).`);
+    }
+    for (const account of enabledMissingSkills) {
+        globalLogger.warn(
+            `@${account.username}: skills file missing or empty at ${account.skillsFile ?? '(not set)'}`
+        );
+    }
+
     const aiGenerator = new AICommentGenerator(config.settings.googleAiApiKey, {
         mockComments: config.settings.mockAiComments,
+        maxRequestsPerMinute: config.settings.geminiMaxRequestsPerMinute,
     });
     const mode = process.argv[2];
 
     if (mode === 'test-comment') {
-        await runTestCommentMode(aiGenerator);
+        await runTestCommentMode(aiGenerator, accountSkillsCache);
     } else if (mode === 'check-accounts') {
-        await runCheckAccountsMode(aiGenerator);
+        await runCheckAccountsMode(aiGenerator, accountSkillsCache);
     } else if (mode === 'comment-urls') {
-        await runCommentUrlsMode(aiGenerator);
+        await runCommentUrlsMode(aiGenerator, accountSkillsCache);
     } else if (mode === 'hashtag-comment') {
-        await runHashtagCommentMode(aiGenerator);
+        await runHashtagCommentMode(aiGenerator, accountSkillsCache);
     } else {
-        await runMonitorMode(aiGenerator);
+        await runUnifiedMode(aiGenerator, accountSkillsCache);
     }
 })();

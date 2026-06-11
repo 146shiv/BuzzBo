@@ -23,10 +23,13 @@ This project is for educational purposes only. Automating interactions on Instag
     -   Saves and reuses cookies for persistent login sessions.
     -   Logs all comment interactions to a global CSV file (`interaction_log.csv`).
     -   Tracks post/follower counts for each target in a separate CSV (`profile_stats.csv`) to detect new posts.
+-   **Per-Account Configuration**: Each account defines its own login method, post-discovery mode, skills file, URL/hashtag files, and hashtag search settings.
+-   **Unified Runtime**: `npm start` runs all enabled accounts — URL lists once, then a continuous monitor loop for target monitoring and hashtag scanning.
 -   **Multiple Operational Modes**:
-    -   `monitor`: The main mode for continuously monitoring targets and posting comments.
-    -   `test-comment`: Runs a single comment task for a specific account to test its configuration.
-    -   `check-accounts`: A non-headless mode to manually check the status of each account, handle CAPTCHAs, or verify logins.
+    -   `start` (default): Unified mode — URL list accounts run once, then monitor + hashtag accounts loop.
+    -   `test-comment`: Tests one enabled account according to its `sourceMode`.
+    -   `check-accounts`: Non-headless mode to inspect each enabled account (login, CAPTCHAs, 2FA).
+    -   `comment-urls` / `hashtag-comment`: Deprecated shortcuts for `url_list` / `hashtag_list` accounts only.
 -   **Robust Error Handling**: Designed to handle common issues like private profiles, missing posts, and failed actions, with screenshotting on error for easier debugging.
 
 ## Prerequisites
@@ -54,41 +57,53 @@ Before you begin, ensure you have the following installed:
 
     -   **Google AI API Key**: Add your Google Gemini API key to the `googleAiApiKey` string. You can get one from [Google AI Studio](https://aistudio.google.com/app/apikey).
     -   **Headless Mode**: Set `headless: true` to run the browser in the background or `false` to see the browser window.
-    -   **Accounts**: Add your Instagram accounts to the `accounts` array.
+    -   **Accounts**: Add your Instagram accounts to the `accounts` array. Each account is self-contained:
         -   `enabled`: `true` to use this account, `false` to disable it.
-        -   `username`/`password`: Your Instagram credentials.
-        -   `aiPromptHint`: (Optional) A custom instruction for the AI to guide its comment style for this specific account.
-        -   `targets`: A list of Instagram usernames this account should monitor.
+        -   `loginMethod`: `'credentials'` (username/password) or `'manual'` (log in via browser; cookies saved).
+        -   `sourceMode`: How this account finds posts to comment on:
+            -   `new_post_added_to_account` — monitor `targets` for new posts (continuous loop).
+            -   `url_list` — comment on URLs from per-account `postUrlsFile` (once per `npm start`).
+            -   `hashtag_list` — scan per-account `hashtags` array each monitor cycle.
+        -   `skillsFile` (required) — one comment style file per Instagram account, shared across all source modes.
+        -   Post filter only: `targets` (monitor), `postUrlsFile` (url_list), `hashtags` array (hashtag_list).
 
     *See the [Configuration](#configuration) section below for more details.*
 
 ## Usage (Running the Bot)
 
-You can run the bot in three different modes using the predefined npm scripts.
+**1. Unified Mode (Default — `npm start`)**
 
-**1. Monitor Mode (Default)**
-This is the primary mode. The bot will launch and start monitoring all targets from all enabled accounts. When a new post is detected, it will use the designated accounts to post comments.
+Runs all enabled accounts in two phases:
+
+1. **URL phase** — each `url_list` account comments on its URL file once, then exits.
+2. **Monitor loop** — `new_post_added_to_account` accounts watch targets for new posts; `hashtag_list` accounts scan hashtags each cycle.
 
 ```bash
 npm start
 ```
 
 **2. Test Comment Mode**
-This mode tests the first enabled account's ability to comment on its first target. It's useful for a quick check of your setup.
+
+Tests the first enabled account (or a specific one) according to its `sourceMode`.
 
 ```bash
 npm test
-```
-To test a *specific* account from your config, you can run the command directly and pass the username:
-```bash
-npx ts-node src/main.ts test-comment your_instagram_username_1
+npx ts-node src/main.ts test-comment your_username
 ```
 
 **3. Check Accounts Mode**
-This mode runs in non-headless (`headless: false`) mode. It logs into each enabled account one by one, pausing after each login. This allows you to manually inspect the account, solve CAPTCHAs, or handle two-factor authentication. Press `ENTER` in the terminal to proceed to the next account.
+
+Non-headless. Opens each enabled account for manual inspection. Press `ENTER` to proceed to the next account.
 
 ```bash
 npm run checker
+```
+
+**4. Shortcut modes (deprecated)**
+
+```bash
+npm run comment-urls          # url_list accounts only
+npm run hashtag-comment       # hashtag_list accounts, one cycle
 ```
 
 ### In-Script Controls
@@ -99,31 +114,30 @@ npm run checker
 
 ## Configuration (`src/config.ts`)
 
-The `config.ts` file is the control center for the bot.
+Global `settings` provide defaults; each account can override files and hashtag search behavior.
 
 ```typescript
-export interface Config {
-    settings: {
-        headless: boolean; // Run browser in background (true) or visibly (false)
-        developerMode: boolean; // Use shorter delays for fast debugging
-        googleAiApiKey: string; // Your Google Gemini API key
-        monitoringIntervalSeconds: { min: number; max: number }; // Time between checking all targets
-        defaultActionDelaySeconds: { min: number; max: number }; // Time between consecutive comments
-        // ...
+// Per-account enums
+type LoginMethod = 'credentials' | 'manual';
+type PostSourceMode = 'new_post_added_to_account' | 'url_list' | 'hashtag_list';
+
+// One Instagram account — skillsFile is per user, sourceMode is only the post filter
+accounts: [
+    {
+        enabled: true,
+        username: 'studybo.app',
+        loginMethod: 'credentials',
+        password: 'YOUR_PASSWORD_HERE',
+        sourceMode: 'new_post_added_to_account',  // or 'url_list' | 'hashtag_list'
+        skillsFile: 'data/accounts/studybo.app/skills.txt',
+        targets: ['instagram', 'playwright'],     // new_post_added_to_account
+        // postUrlsFile: 'data/accounts/studybo.app/urls.txt',  // url_list
+        // hashtags: ['studygram', 'productivity'],              // hashtag_list
     },
-    accounts: [
-        {
-            enabled: boolean; // Set to true to use this account
-            username: string;
-            password: string;
-            aiPromptHint?: string; // Optional AI instruction
-            targets: string[]; // List of usernames to monitor
-            // ...
-        },
-        // ... more accounts
-    ],
-};
+]
 ```
+
+`sourceMode` only changes how posts are discovered. Comment skills stay in one `skillsFile` per Instagram account. Global defaults in `settings`: `hashtagSearch`, `monitoringIntervalSeconds`.
 
 ---
 
