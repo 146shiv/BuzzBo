@@ -16,6 +16,12 @@ import { generateFingerprint, Fingerprint } from './fingerprint';
 import { Logger } from './logger';
 import { AICommentGenerator } from './genai';
 import { CommentHistoryStore } from './commentHistory';
+import {
+    fetchRecentMediaBatch,
+    mapApiPostsToCandidates,
+    searchHashtagId,
+} from './instagramApi';
+import { formatEngagementCounts, rankHashtagCandidates } from './hashtagRanking';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const globalLogger = new Logger('SYSTEM');
@@ -400,6 +406,15 @@ async function runTestCommentMode(
             );
             break;
         }
+        case 'hashtag_api': {
+            await runHashtagApiScanForAccount(
+                accountToUse,
+                aiGenerator,
+                commentHistory,
+                accountSkillsCache
+            );
+            break;
+        }
         default:
             globalLogger.error(`Unknown sourceMode for @${accountToUse.username}.`);
     }
@@ -602,7 +617,7 @@ async function runHashtagScanForAccount(
     }
 
     const { browser, bot } = session;
-    const searchConfig = resolved.hashtagSearch;
+    const searchConfig = resolved.hashtagSearch.ui_search;
     const commentedShortcodes = commentHistory.getCommentedShortcodes(account.username);
 
     try {
@@ -650,6 +665,167 @@ async function runHashtagScanForAccount(
                     globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next post...`);
                     await delay(waitMs);
                 }
+            }
+
+            if (h < hashtags.length - 1) {
+                const waitMs = bot.getRandomActionDelayMs();
+                globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next hashtag...`);
+                await delay(waitMs);
+            }
+        }
+    } finally {
+        globalLogger.action(`Closing browser for @${account.username}...`);
+        await browser.close();
+    }
+
+    return result;
+}
+
+async function runHashtagApiScanForAccount(
+    account: AccountConfig,
+    aiGenerator: AICommentGenerator,
+    commentHistory: CommentHistoryStore,
+    accountSkillsCache: Map<string, string | undefined>
+): Promise<HashtagScanResult> {
+    const resolved = resolveAccountSettings(account);
+    const hashtags = resolved.hashtags;
+    const apiSearchConfig = resolved.hashtagSearch.api_search;
+    const result: HashtagScanResult = { success: 0, skipped: 0, failed: 0 };
+
+    if (hashtags.length === 0) {
+        globalLogger.error(`@${account.username}: No hashtags configured in account config.`);
+        return result;
+    }
+
+    const credentials = {
+        userId: account.instagramApiUserId!.trim(),
+        accessToken: account.instagramApiAccessToken!.trim(),
+    };
+
+    globalLogger.info(
+        `@${account.username}: API hashtag scan for ${hashtags.length} tag(s): ${hashtags.map(h => `#${h}`).join(', ')}`
+    );
+
+    const sessionLogger = new Logger(account.username);
+    const session = await initializeBotSession(
+        account,
+        aiGenerator,
+        commentHistory,
+        sessionLogger,
+        accountSkillsCache
+    );
+
+    if (!session) {
+        globalLogger.error(`@${account.username}: Failed to initialize browser session.`);
+        return result;
+    }
+
+    const { browser, bot } = session;
+    const commentedShortcodes = commentHistory.getCommentedShortcodes(account.username);
+
+    try {
+        for (let h = 0; h < hashtags.length; h++) {
+            const hashtag = hashtags[h];
+            globalLogger.header(
+                `----- @${account.username} API Hashtag ${h + 1}/${hashtags.length}: #${hashtag} -----`
+            );
+
+            let hashtagId: string;
+            try {
+                hashtagId = await searchHashtagId(hashtag, credentials);
+                globalLogger.info(`Resolved #${hashtag} → hashtag ID ${hashtagId}`);
+            } catch (error: any) {
+                globalLogger.error(
+                    `@${account.username}: Failed to resolve hashtag ID for #${hashtag}: ${error.message}`
+                );
+                continue;
+            }
+
+            let after: string | undefined;
+            let batchIndex = 0;
+
+            while (true) {
+                batchIndex++;
+                let batch;
+                try {
+                    batch = await fetchRecentMediaBatch(
+                        hashtagId,
+                        credentials,
+                        apiSearchConfig.fetchBatchSize,
+                        after
+                    );
+                } catch (error: any) {
+                    globalLogger.error(
+                        `@${account.username}: API fetch failed for #${hashtag} batch ${batchIndex}: ${error.message}`
+                    );
+                    break;
+                }
+
+                if (batch.posts.length === 0) {
+                    globalLogger.info(`@${account.username}: No more posts for #${hashtag} (batch ${batchIndex}).`);
+                    break;
+                }
+
+                globalLogger.info(
+                    `@${account.username}: Fetched ${batch.posts.length} post(s) for #${hashtag} (batch ${batchIndex}).`
+                );
+
+                const candidates = mapApiPostsToCandidates(
+                    batch.posts,
+                    apiSearchConfig,
+                    commentedShortcodes
+                );
+                const rankedPosts = rankHashtagCandidates(candidates, apiSearchConfig);
+
+                if (rankedPosts.length === 0) {
+                    globalLogger.warn(
+                        `@${account.username}: No qualifying posts in batch ${batchIndex} for #${hashtag}.`
+                    );
+                } else {
+                    globalLogger.header(`Ranked posts for #${hashtag} (batch ${batchIndex}):`);
+                    rankedPosts.forEach((candidate, index) => {
+                        globalLogger.info(
+                            `${index + 1}. ${candidate.url} | ${formatEngagementCounts(candidate)} | score: ${candidate.engagementScore}`
+                        );
+                    });
+                }
+
+                for (let i = 0; i < rankedPosts.length; i++) {
+                    const candidate = rankedPosts[i];
+                    globalLogger.header(
+                        `----- @${account.username} #${hashtag} batch ${batchIndex} post ${i + 1}/${rankedPosts.length}: ${candidate.url} -----`
+                    );
+
+                    if (commentHistory.hasCommented(account.username, candidate.shortcode)) {
+                        globalLogger.warn(`Already commented on ${candidate.shortcode}. Skipping.`);
+                        result.skipped++;
+                        continue;
+                    }
+
+                    const commentResult = await bot.runCommentTaskOnUrl(candidate.url, account.aiPromptHint);
+
+                    if (commentResult === 'SUCCESS') {
+                        commentedShortcodes.add(candidate.shortcode);
+                        result.success++;
+                    } else if (commentResult === 'SKIPPED') {
+                        result.skipped++;
+                    } else {
+                        result.failed++;
+                    }
+
+                    if (i < rankedPosts.length - 1) {
+                        const waitMs = bot.getRandomActionDelayMs();
+                        globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next post...`);
+                        await delay(waitMs);
+                    }
+                }
+
+                if (!batch.nextAfter) {
+                    globalLogger.info(`@${account.username}: Reached end of #${hashtag} media pages.`);
+                    break;
+                }
+
+                after = batch.nextAfter;
             }
 
             if (h < hashtags.length - 1) {
@@ -880,6 +1056,7 @@ async function runMonitorLoop(
 
     const monitorAccounts = getEnabledAccountsBySourceMode('new_post_added_to_account');
     const hashtagAccounts = getEnabledAccountsBySourceMode('hashtag_list');
+    const hashtagApiAccounts = getEnabledAccountsBySourceMode('hashtag_api');
 
     const targetMap = new Map<string, { account: AccountConfig }[]>();
     monitorAccounts.forEach(account => {
@@ -918,7 +1095,10 @@ async function runMonitorLoop(
         globalLogger.info(`Monitoring ${targetMap.size} unique targets across new_post_added_to_account accounts.`);
     }
     if (hashtagAccounts.length > 0) {
-        globalLogger.info(`Hashtag scanning enabled for ${hashtagAccounts.length} account(s) each cycle.`);
+        globalLogger.info(`Hashtag UI scanning enabled for ${hashtagAccounts.length} account(s) each cycle.`);
+    }
+    if (hashtagApiAccounts.length > 0) {
+        globalLogger.info(`Hashtag API scanning enabled for ${hashtagApiAccounts.length} account(s) each cycle.`);
     }
 
     let monitorSession: { browser: Browser; bot: InstagramBot } | null = null;
@@ -1056,10 +1236,18 @@ async function runMonitorLoop(
                 }
             }
 
-            if (hashtagAccounts.length > 0) {
+            if (hashtagAccounts.length > 0 || hashtagApiAccounts.length > 0) {
                 globalLogger.header('----- Hashtag Scanning -----');
                 for (const account of hashtagAccounts) {
                     await runHashtagScanForAccount(
+                        account,
+                        aiGenerator,
+                        commentHistory,
+                        accountSkillsCache
+                    );
+                }
+                for (const account of hashtagApiAccounts) {
+                    await runHashtagApiScanForAccount(
                         account,
                         aiGenerator,
                         commentHistory,
@@ -1103,7 +1291,7 @@ async function runUnifiedMode(
 
     const hasMonitorWork = enabledAccounts.some(acc => {
         const mode = normalizeAccount(acc).sourceMode;
-        return mode === 'new_post_added_to_account' || mode === 'hashtag_list';
+        return mode === 'new_post_added_to_account' || mode === 'hashtag_list' || mode === 'hashtag_api';
     });
 
     if (!hasMonitorWork) {
@@ -1183,7 +1371,9 @@ async function runUnifiedMode(
                 ? `Targets: ${chalk.yellow(String(account.targets?.length ?? 0))}`
                 : normalized.sourceMode === 'url_list'
                   ? `URLs: ${chalk.yellow(resolved.postUrlsFile ?? 'not set')}`
-                  : `Hashtags: ${chalk.yellow(resolved.hashtags.map(h => `#${h}`).join(', ') || 'not set')}`;
+                  : normalized.sourceMode === 'hashtag_api'
+                    ? `Hashtags (API): ${chalk.yellow(resolved.hashtags.map(h => `#${h}`).join(', ') || 'not set')}`
+                    : `Hashtags: ${chalk.yellow(resolved.hashtags.map(h => `#${h}`).join(', ') || 'not set')}`;
 
         globalLogger.action(
             `Account: ${chalk.cyan(account.username)} | Enabled: ${enabledStatus} | Login: ${normalized.loginMethod} | Mode: ${normalized.sourceMode} | Skills: ${chalk.yellow(resolved.skillsFile || 'not set')} | ${modeDetail}`

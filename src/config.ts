@@ -17,14 +17,32 @@ export interface BehaviorConfig {
     typingDelayMs: DelayConfig;
 }
 
-export interface HashtagSearchConfig {
-    maxPostsToScan: number;
+export interface HashtagEngagementConfig {
     maxPostsToComment: number;
     minLikes: number;
     minComments: number;
     likeWeight: number;
     commentWeight: number;
+}
+
+export interface UiHashtagSearchConfig extends HashtagEngagementConfig {
+    maxPostsToScan: number;
     preferTopTab: boolean;
+}
+
+export interface ApiHashtagSearchConfig extends HashtagEngagementConfig {
+    /** Posts to fetch per API batch before ranking */
+    fetchBatchSize: number;
+}
+
+export interface HashtagSearchConfig {
+    ui_search: UiHashtagSearchConfig;
+    api_search: ApiHashtagSearchConfig;
+}
+
+export interface AccountHashtagSearchOverride {
+    ui_search?: Partial<UiHashtagSearchConfig>;
+    api_search?: Partial<ApiHashtagSearchConfig>;
 }
 
 export type LoginMethod = 'credentials' | 'manual';
@@ -32,7 +50,8 @@ export type LoginMethod = 'credentials' | 'manual';
 export type PostSourceMode =
     | 'new_post_added_to_account'
     | 'url_list'
-    | 'hashtag_list';
+    | 'hashtag_list'
+    | 'hashtag_api';
 
 export interface AccountConfig {
     enabled: boolean;
@@ -44,9 +63,13 @@ export interface AccountConfig {
     skillsFile?: string;
     /** Per-account post URL list file (required for url_list) */
     postUrlsFile?: string;
-    /** Per-account hashtags (required for hashtag_list) */
+    /** Per-account hashtags (required for hashtag_list / hashtag_api) */
     hashtags?: string[];
-    hashtagSearch?: Partial<HashtagSearchConfig>;
+    hashtagSearch?: AccountHashtagSearchOverride;
+    /** Instagram Graph API credentials (required for hashtag_api) */
+    instagramApiAccessToken?: string;
+    /** IG Business Account ID for Graph API (required for hashtag_api) */
+    instagramApiUserId?: string;
     aiPromptHint?: string;
     actionDelaySeconds?: ActionDelayConfig;
     targets?: string[];
@@ -136,8 +159,14 @@ export function resolveAccountSettings(account: AccountConfig): ResolvedAccountS
         postUrlsFile: normalized.postUrlsFile,
         hashtags: normalized.hashtags ?? [],
         hashtagSearch: {
-            ...config.settings.hashtagSearch,
-            ...normalized.hashtagSearch,
+            ui_search: {
+                ...config.settings.hashtagSearch.ui_search,
+                ...normalized.hashtagSearch?.ui_search,
+            },
+            api_search: {
+                ...config.settings.hashtagSearch.api_search,
+                ...normalized.hashtagSearch?.api_search,
+            },
         },
     };
 }
@@ -198,6 +227,24 @@ export function validateAccounts(accounts: AccountConfig[]): void {
                 }
                 break;
             }
+            case 'hashtag_api': {
+                if (!account.hashtags || account.hashtags.length === 0) {
+                    errors.push(
+                        `${label}: hashtags must be a non-empty array when sourceMode is 'hashtag_api'.`
+                    );
+                }
+                if (!account.instagramApiAccessToken?.trim()) {
+                    errors.push(
+                        `${label}: instagramApiAccessToken is required when sourceMode is 'hashtag_api'.`
+                    );
+                }
+                if (!account.instagramApiUserId?.trim()) {
+                    errors.push(
+                        `${label}: instagramApiUserId is required when sourceMode is 'hashtag_api'.`
+                    );
+                }
+                break;
+            }
             default:
                 errors.push(`${label}: unknown sourceMode '${account.sourceMode}'.`);
         }
@@ -239,13 +286,23 @@ export const config: Config = {
             max: 180,
         },
         hashtagSearch: {
-            maxPostsToScan: 2,
-            maxPostsToComment: 3,
-            minLikes: 0,
-            minComments: 0,
-            likeWeight: 1,
-            commentWeight: 2,
-            preferTopTab: true,
+            ui_search: {
+                maxPostsToScan: 2,
+                maxPostsToComment: 3,
+                minLikes: 0,
+                minComments: 0,
+                likeWeight: 1,
+                commentWeight: 2,
+                preferTopTab: true,
+            },
+            api_search: {
+                fetchBatchSize: 100,
+                maxPostsToComment: 5,
+                minLikes: 0,
+                minComments: 0,
+                likeWeight: 1,
+                commentWeight: 2,
+            },
         },
     },
     accounts: [
@@ -254,10 +311,32 @@ export const config: Config = {
             username: 'studyboapp',
             loginMethod: 'manual',
             password: 'YOUR_PASSWORD_HERE',
-            // sourceMode: 'url_list',
-            // postUrlsFile: 'data/accounts/studybo.app/urls.txt',
-            sourceMode: 'hashtag_list',
-            hashtags: ['jee'],
+            sourceMode: 'url_list',
+            postUrlsFile: 'data/accounts/studybo.app/urls.txt',
+            // sourceMode: 'hashtag_list',
+            // sourceMode: 'hashtag_api',
+            hashtags: [
+                // 'studygram',
+                'studymotivation',
+                'studywithme',
+                // 'studytips',
+                'productivity',
+                'productivitytips',
+                'focus',
+                'pomodoro',
+                'studyplanner',
+                'timemanagement',
+                'studentlife',
+                'exampreparation',
+                'studentmotivation',
+                'consistency',
+                'goalsetting'
+            ],
+            instagramApiAccessToken: 'EAAfZCptW4g1gBRpvyNF4kPGtZBCj88v4CeWCIi1tvZCtEk2opu56ZAaYLkqS3JJX1oFzmKgKAI1YK6eKaWn8Q6ZCgtFL2cdTNV4XH0RHkHPNXZCzZBRiP4ZC2lOWfg0pnhMCDIwH0u7tICTZCxF6Yy3MCCrk0AgADGGbBtSUiQulkVHUMtuPXeFRerc9QNnZBxnX4k54XWaLVeib7ljLN0hUI0NnLSjOZC6aUIlizLn6rRNMZAdY0IUX6iqCrXJwEZC4nrb5yEuG91aqQJXNtIfkYnVvX1AOY',
+            instagramApiUserId: '17841473789521517',
+            hashtagSearch: {
+               api_search: { fetchBatchSize: 5, maxPostsToComment: 5 },
+            },
             skillsFile: 'data/accounts/studybo.app/skills.txt',
             aiPromptHint: "Respond supportively to the post as a real student—helpful, relatable",
             actionDelaySeconds: { min: 80, max: 160 },

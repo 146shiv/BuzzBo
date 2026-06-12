@@ -1,22 +1,20 @@
 import { Page, BrowserContext, Locator } from 'playwright';
 import * as path from 'path';
 import * as fs from 'fs';
-import { AccountConfig, SettingsConfig, BehaviorConfig, HashtagSearchConfig } from './config';
+import { AccountConfig, SettingsConfig, BehaviorConfig, UiHashtagSearchConfig } from './config';
 import { HumanBehavior, PauseState } from './humanBehavior';
 import { Logger } from './logger';
 import { AICommentGenerator } from './genai';
 import { CommentHistoryStore, extractPostShortcode } from './commentHistory';
+import {
+    computeEngagementScore,
+    formatEngagementCounts,
+    HashtagPostCandidate,
+    rankHashtagCandidates,
+} from './hashtagRanking';
 
 export type InteractionResult = 'SUCCESS' | 'SKIPPED' | 'FAILED';
-
-export interface HashtagPostCandidate {
-    url: string;
-    shortcode: string;
-    likes: number;
-    comments: number;
-    engagementScore: number;
-    contentType: 'post' | 'reel';
-}
+export type { HashtagPostCandidate } from './hashtagRanking';
 
 export class InstagramBot {
     private context!: BrowserContext;
@@ -693,7 +691,7 @@ export class InstagramBot {
         return urls;
     }
 
-    public async discoverHashtagPostUrls(hashtag: string, searchConfig: HashtagSearchConfig): Promise<string[]> {
+    public async discoverHashtagPostUrls(hashtag: string, searchConfig: UiHashtagSearchConfig): Promise<string[]> {
         const normalizedTag = hashtag.replace(/^#/, '').toLowerCase();
         this.logger.action(`Discovering posts for #${normalizedTag}...`);
 
@@ -789,7 +787,7 @@ export class InstagramBot {
 
     public async discoverAndRankHashtagPosts(
         hashtag: string,
-        searchConfig: HashtagSearchConfig,
+        searchConfig: UiHashtagSearchConfig,
         skipShortcodes: Set<string> = new Set()
     ): Promise<HashtagPostCandidate[]> {
         const urls = await this.discoverHashtagPostUrls(hashtag, searchConfig);
@@ -814,8 +812,6 @@ export class InstagramBot {
                 continue;
             }
 
-            const engagementScore =
-                likes * searchConfig.likeWeight + comments * searchConfig.commentWeight;
             const contentType: 'post' | 'reel' = url.includes('/reel/') ? 'reel' : 'post';
 
             candidates.push({
@@ -823,26 +819,20 @@ export class InstagramBot {
                 shortcode,
                 likes,
                 comments,
-                engagementScore,
+                engagementScore: computeEngagementScore(likes, comments, searchConfig),
                 contentType,
             });
 
             await this.humanBehavior.randomDelay(500, 1200);
         }
 
-        candidates.sort((a, b) => {
-            if (b.engagementScore !== a.engagementScore) return b.engagementScore - a.engagementScore;
-            if (b.likes !== a.likes) return b.likes - a.likes;
-            return b.comments - a.comments;
-        });
-
-        const topCandidates = candidates.slice(0, searchConfig.maxPostsToComment);
+        const topCandidates = rankHashtagCandidates(candidates, searchConfig);
 
         if (topCandidates.length > 0) {
             this.logger.header(`Ranked posts for #${hashtag.replace(/^#/, '')}:`);
             topCandidates.forEach((candidate, index) => {
                 this.logger.info(
-                    `${index + 1}. ${candidate.url} | likes: ${candidate.likes} | comments: ${candidate.comments} | score: ${candidate.engagementScore}`
+                    `${index + 1}. ${candidate.url} | ${formatEngagementCounts(candidate)} | score: ${candidate.engagementScore}`
                 );
             });
         } else {
