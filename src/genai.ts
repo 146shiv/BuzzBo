@@ -175,7 +175,11 @@ export class AICommentGenerator {
         sections.push(
             '',
             '## Output',
-            'Return only the comment text. No quotes, labels, numbering, or explanation.'
+            'Return only the comment text. No quotes, labels, numbering, or explanation.',
+            'NEVER say you lack context, need more information, or ask anyone for details.',
+            'NEVER describe what you cannot see — output a comment only.',
+            'NEVER admit confusion (e.g. "no idea", "not sure what this is", "what is going on").',
+            'If the post is unclear, write one short supportive study-life comment a student would post — never meta-commentary.'
         );
 
         return sections.join('\n');
@@ -241,6 +245,9 @@ export class AICommentGenerator {
         const trimmed = text.trim();
         if (!trimmed) {
             throw new Error('AI returned an empty comment.');
+        }
+        if (isUnusableAiComment(trimmed)) {
+            throw new Error('AI returned an unusable comment (refusal or low quality).');
         }
         return trimmed.replace(/"/g, '');
     }
@@ -350,6 +357,10 @@ export class AICommentGenerator {
         return this.sanitizeComment(text);
     }
 
+    public supportsVideoAnalysis(): boolean {
+        return this.provider === 'gemini';
+    }
+
     public async generateInstagramComment(
         postText: string,
         targetUsername: string,
@@ -378,11 +389,10 @@ export class AICommentGenerator {
             console.log(`[AI_INFO] Sending image to ${this.provider} for analysis: ${imageUrl}`);
             imageData = await this.fetchImageAsBase64(imageUrl);
             hasMedia = Boolean(imageData);
-        } else if (videoUrl) {
+        } else if (videoUrl && this.provider !== 'gemini') {
             console.log(
-                `[AI_INFO] Video detected for ${this.provider}; using caption-only prompt (video bytes not sent).`
+                `[AI_INFO] Video URL found but ${this.provider} cannot analyze video bytes; caption-only prompt.`
             );
-            hasMedia = true;
         }
 
         const promptText = this.buildPrompt(
@@ -423,4 +433,113 @@ export class AICommentGenerator {
             throw new Error(`Failed to generate comment for @${targetUsername} using ${this.provider}.`);
         }
     }
+}
+
+const META_REFUSAL_PATTERNS = [
+    /give me the context/i,
+    /not getting the (right )?context/i,
+    /cannot generate/i,
+    /can't generate/i,
+    /can not generate/i,
+    /unable to (write|generate|create|provide).*comment/i,
+    /insufficient context/i,
+    /need more (context|information|details)/i,
+    /please provide (more |the )?(context|information|details)/i,
+    /i (?:do not|don't) have (?:enough|sufficient) (?:context|information)/i,
+    /without (?:more )?(?:context|information|details)/i,
+];
+
+const LOW_QUALITY_COMMENT_PATTERNS = [
+    /no idea what/i,
+    /don't know what/i,
+    /do not know what/i,
+    /not sure what/i,
+    /can't tell what/i,
+    /cannot tell what/i,
+    /what(?:'s| is) going on/i,
+    /what is this (?:post|reel|video)/i,
+    /what am i looking at/i,
+    /makes no sense/i,
+    /doesn't make sense/i,
+    /does not make sense/i,
+    /(?:this|the) (?:post|reel|video) (?:is )?confus/i,
+    /idk what/i,
+    /\blol\b.*\b(?:no idea|don't know|not sure)/i,
+];
+
+const CAPTION_NOISE_PATTERNS = [
+    /^view all/i,
+    /^liked by/i,
+    /^see translation/i,
+    /^view \d+ repl/i,
+    /^\d+ (?:likes?|comments?|views?)/i,
+    /^original audio/i,
+    /^audio/i,
+];
+
+const MIN_SUBSTANTIVE_CAPTION_LENGTH = 20;
+
+const GENERIC_STUDY_FALLBACK_COMMENTS = [
+    'Splitting the day into pomodoro blocks honestly saved my focus during exam season @studyboapp',
+    'When the syllabus feels huge, planning one week at a time helps — @studyboapp makes that easier',
+    'Small daily study streaks beat cramming the night before @studyboapp',
+    'Breaking revision into timed blocks keeps the panic down during boards @studyboapp',
+    'A simple weekly study plan takes so much pressure off @studyboapp',
+];
+
+export function isSubstantiveCaption(caption: string): boolean {
+    const trimmed = caption.trim();
+    if (trimmed.length < MIN_SUBSTANTIVE_CAPTION_LENGTH) {
+        return false;
+    }
+    return !CAPTION_NOISE_PATTERNS.some(pattern => pattern.test(trimmed));
+}
+
+export function isMetaRefusalComment(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed) return true;
+    return META_REFUSAL_PATTERNS.some(pattern => pattern.test(trimmed));
+}
+
+export function isLowQualityAiComment(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed) return true;
+    return LOW_QUALITY_COMMENT_PATTERNS.some(pattern => pattern.test(trimmed));
+}
+
+export function isUnusableAiComment(text: string): boolean {
+    return isMetaRefusalComment(text) || isLowQualityAiComment(text);
+}
+
+export function getGenericStudyFallbackComment(mentionHandle?: string): string {
+    const comment =
+        GENERIC_STUDY_FALLBACK_COMMENTS[
+            Math.floor(Math.random() * GENERIC_STUDY_FALLBACK_COMMENTS.length)
+        ];
+    const handle = mentionHandle?.trim().replace(/^@/, '');
+    return handle ? `${comment} @${handle}` : comment;
+}
+
+export function hasActionablePostContext(
+    postText: string,
+    imageUrl?: string,
+    videoUrl?: string,
+    videoAnalysisAvailable = false,
+    isVideoPost = false
+): boolean {
+    const substantiveCaption = isSubstantiveCaption(postText);
+
+    if (imageUrl) {
+        return true;
+    }
+
+    if (videoUrl && videoAnalysisAvailable) {
+        return true;
+    }
+
+    if (isVideoPost && videoUrl && !videoAnalysisAvailable) {
+        return substantiveCaption;
+    }
+
+    return substantiveCaption;
 }

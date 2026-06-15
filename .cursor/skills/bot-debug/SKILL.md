@@ -20,7 +20,7 @@ description: Debug Instagram bot failures using logs and screenshots. Use when e
 | Selector timeout | Instagram UI change | Delegate `playwright-explorer`; read `playwright-selectors/reference.md` |
 | Empty AI comment | API key, Gemini error | Check `googleAiApiKey`; read `[AI_ERROR]` logs |
 | SKIPPED | Private profile, no posts, already commented | Expected; verify `profile_stats.csv` |
-| Video play error | "trouble playing this video" | Check video capture in `bot.ts` |
+| Video play error | "trouble playing this video" | Set `browserChannel: 'chrome'` in config (Chromium lacks H.264) |
 
 ## Debug settings
 

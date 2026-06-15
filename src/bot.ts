@@ -10,7 +10,12 @@ import {
 } from './config';
 import { HumanBehavior, PauseState } from './humanBehavior';
 import { Logger } from './logger';
-import { AICommentGenerator } from './genai';
+import {
+    AICommentGenerator,
+    getGenericStudyFallbackComment,
+    hasActionablePostContext,
+    isUnusableAiComment,
+} from './genai';
 import { CommentHistoryStore, extractPostShortcode } from './commentHistory';
 import {
     computeEngagementScore,
@@ -1001,15 +1006,59 @@ export class InstagramBot {
             this.logger.warn('Could not extract post media.');
         }
 
-        this.logger.action('Generating AI comment...');
-        const aiComment = await this.aiGenerator.generateInstagramComment(
+        const isVideoPost = isReel || Boolean(postVideoUrl);
+        const hasContext = hasActionablePostContext(
             postCaption,
-            targetUsername,
-            aiPromptHint,
             postImageUrl,
             postVideoUrl,
-            this.channelSkillsContext
+            this.aiGenerator.supportsVideoAnalysis(),
+            isVideoPost
         );
+
+        let aiComment: string;
+        if (!hasContext) {
+            if (isVideoPost) {
+                return await this.skipUnreadablePost(
+                    postShortcode,
+                    'Video post has no analyzable caption or media for AI.'
+                );
+            }
+            aiComment = getGenericStudyFallbackComment(this.getMentionHandle());
+            this.logger.warn('No post context available; using generic study fallback comment.');
+        } else {
+            this.logger.action('Generating AI comment...');
+            try {
+                aiComment = await this.aiGenerator.generateInstagramComment(
+                    postCaption,
+                    targetUsername,
+                    aiPromptHint,
+                    postImageUrl,
+                    postVideoUrl,
+                    this.channelSkillsContext
+                );
+            } catch (error: any) {
+                if (isVideoPost) {
+                    return await this.skipUnreadablePost(
+                        postShortcode,
+                        `AI could not generate comment: ${error.message}`
+                    );
+                }
+                this.logger.warn(`AI generation failed (${error.message}); using generic study fallback.`);
+                aiComment = getGenericStudyFallbackComment(this.getMentionHandle());
+            }
+
+            if (isUnusableAiComment(aiComment)) {
+                if (isVideoPost) {
+                    return await this.skipUnreadablePost(
+                        postShortcode,
+                        'AI returned a low-quality or unusable comment for video post.'
+                    );
+                }
+                this.logger.warn('AI returned unusable comment; using generic study fallback.');
+                aiComment = getGenericStudyFallbackComment(this.getMentionHandle());
+            }
+        }
+
         const finalComment = this.ensureChannelMention(aiComment);
         if (finalComment !== aiComment) {
             this.logger.info(`Final comment with mention: "${finalComment}"`);
