@@ -161,6 +161,13 @@ export class AICommentGenerator {
             sections.push('', '## Style guide', skills);
         }
 
+        sections.push(
+            '',
+            '## Mentions',
+            'When the style guide includes @studyboapp or another @handle, include the @ in your output.',
+            'Instagram needs the literal @username text — do not write "studybo app" without @.'
+        );
+
         if (promptHint?.trim()) {
             sections.push('', '## Extra hint', promptHint.trim());
         }

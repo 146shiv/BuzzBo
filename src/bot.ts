@@ -1,7 +1,13 @@
 import { Page, BrowserContext, Locator } from 'playwright';
 import * as path from 'path';
 import * as fs from 'fs';
-import { AccountConfig, SettingsConfig, BehaviorConfig, UiHashtagSearchConfig } from './config';
+import {
+    AccountConfig,
+    SettingsConfig,
+    BehaviorConfig,
+    MentionPolicy,
+    UiHashtagSearchConfig,
+} from './config';
 import { HumanBehavior, PauseState } from './humanBehavior';
 import { Logger } from './logger';
 import { AICommentGenerator } from './genai';
@@ -31,6 +37,7 @@ export class InstagramBot {
     private readonly aiGenerator: AICommentGenerator;
     private readonly commentHistory: CommentHistoryStore;
     private readonly channelSkillsContext?: string;
+    private readonly browserViewport: { width: number; height: number };
     private capturedVideoUrl: string | undefined = undefined;
     private isCapturingVideo: boolean = false;
     private readonly logsDir: string;
@@ -46,6 +53,7 @@ export class InstagramBot {
     ) {
         this.config = accountConfig;
         this.channelSkillsContext = channelSkillsContext?.trim() || undefined;
+        this.browserViewport = globalSettings.browserViewport ?? { width: 1920, height: 1080 };
         this.behavior = globalSettings.behavior;
         this.cookiePath = path.join(__dirname, '..', 'data', 'cookies', `${this.config.username}.json`);
         this.globalLogPath = path.join(__dirname, '..', 'data', 'logs', 'interaction_log.csv');
@@ -364,6 +372,396 @@ export class InstagramBot {
         await this.context.storageState({ path: this.cookiePath });
     }
 
+    private isReelUrl(url?: string): boolean {
+        return /\/reels?\//i.test(url ?? this.page.url());
+    }
+
+    private getMentionHandle(): string | undefined {
+        const handle = this.config.mentionUsername?.trim().replace(/^@/, '');
+        return handle || undefined;
+    }
+
+    private getMentionPolicy(): MentionPolicy {
+        return this.config.mentionPolicy ?? 'ai_only';
+    }
+
+    private ensureChannelMention(comment: string): string {
+        const handle = this.getMentionHandle();
+        const policy = this.getMentionPolicy();
+        if (!handle || policy === 'ai_only') {
+            return comment;
+        }
+
+        const mention = `@${handle}`;
+        const mentionPattern = new RegExp(`@${handle}\\b`, 'i');
+        if (mentionPattern.test(comment)) {
+            return comment;
+        }
+
+        if (policy === 'append_if_missing' || policy === 'always') {
+            this.logger.info(`Appending channel mention ${mention} to comment.`);
+            return `${comment.trimEnd()} ${mention}`;
+        }
+
+        return comment;
+    }
+
+    private async confirmInstagramMention(handle: string): Promise<void> {
+        await this.page.keyboard.type('@');
+        await this.humanBehavior.randomDelay(250, 500);
+
+        for (const char of handle) {
+            await this.page.keyboard.type(char);
+            await this.humanBehavior.randomDelay(70, 160);
+        }
+
+        await this.humanBehavior.randomDelay(900, 1600);
+
+        const suggestionCandidates = [
+            this.page.getByRole('button', { name: new RegExp(handle, 'i') }),
+            this.page.locator('[role="listbox"] [role="button"]').filter({ hasText: new RegExp(handle, 'i') }),
+            this.page.locator('ul[role="listbox"] li, div[role="listbox"] div').filter({
+                hasText: new RegExp(handle, 'i'),
+            }),
+            this.page.getByText(new RegExp(`^${handle}$`, 'i')),
+        ];
+
+        for (const candidate of suggestionCandidates) {
+            if ((await candidate.count()) === 0) {
+                continue;
+            }
+
+            const option = candidate.first();
+            try {
+                if (await option.isVisible({ timeout: 2000 })) {
+                    await this.humanBehavior.hesitateAndClick(option);
+                    await this.humanBehavior.randomDelay(300, 600);
+                    this.logger.debug(`Selected @${handle} from mention suggestions.`);
+                    return;
+                }
+            } catch {
+                continue;
+            }
+        }
+
+        this.logger.warn(`Mention autocomplete for @${handle} not found; accepting keyboard suggestion.`);
+        await this.page.keyboard.press('ArrowDown').catch(() => {});
+        await this.humanBehavior.randomDelay(150, 350);
+        await this.page.keyboard.press('Enter');
+        await this.humanBehavior.randomDelay(300, 600);
+    }
+
+    private async typeCommentWithMentions(commentInput: Locator, text: string): Promise<void> {
+        const mentionPattern = /@[a-zA-Z0-9._]+/g;
+        const parts = text.split(mentionPattern);
+        const mentions = text.match(mentionPattern) ?? [];
+
+        await commentInput.click();
+        await this.humanBehavior.randomDelay(300, 800);
+
+        if (mentions.length === 0) {
+            await this.humanBehavior.typeText(text);
+            return;
+        }
+
+        for (let i = 0; i < parts.length; i++) {
+            const segment = parts[i];
+            if (segment) {
+                await this.humanBehavior.typeText(segment);
+            }
+
+            const mention = mentions[i];
+            if (mention) {
+                await this.confirmInstagramMention(mention.replace(/^@/, ''));
+            }
+        }
+    }
+
+    private resolveCommentNavigationUrl(postUrl: string): string {
+        const shortcode = extractPostShortcode(postUrl);
+        if (!shortcode) {
+            return postUrl;
+        }
+
+        // Full-page /reel/ layout clips the comment panel in automation; /p/ opens stable post modal.
+        if (/\/reels?\//i.test(postUrl)) {
+            const postLayoutUrl = `https://www.instagram.com/p/${shortcode}/`;
+            this.logger.info(`Using post modal URL for commenting: ${postLayoutUrl}`);
+            return postLayoutUrl;
+        }
+
+        return postUrl.startsWith('http')
+            ? postUrl
+            : `https://www.instagram.com/p/${shortcode}/`;
+    }
+
+    private async ensurePostViewLayout(reloadAfterResize = false): Promise<void> {
+        const target = this.browserViewport;
+        const current = this.page.viewportSize();
+        const needsResize =
+            !current || current.width !== target.width || current.height !== target.height;
+
+        if (needsResize) {
+            this.logger.action(`Setting viewport to ${target.width}x${target.height}...`);
+            await this.page.setViewportSize(target);
+            await this.humanBehavior.randomDelay(400, 800);
+        }
+
+        if ((needsResize || reloadAfterResize) && /instagram\.com/i.test(this.page.url())) {
+            this.logger.action('Reloading page to apply viewport layout...');
+            await this.page.reload({ waitUntil: 'domcontentloaded' });
+            await this.humanBehavior.randomizedWait(this.behavior.shortWaitMs);
+            await this.dismissCommonPopups();
+        }
+    }
+
+    private async verifyCommentPosted(commentScope: Locator, aiComment: string): Promise<boolean> {
+        const snippets = [
+            aiComment,
+            aiComment.slice(0, Math.min(60, aiComment.length)),
+            aiComment
+                .replace(/[^\p{L}\p{N}\s]/gu, '')
+                .trim()
+                .slice(0, 40),
+        ].filter((text, index, arr) => text.length >= 8 && arr.indexOf(text) === index);
+
+        const deadline = Date.now() + 15000;
+        while (Date.now() < deadline) {
+            for (const snippet of snippets) {
+                if ((await commentScope.getByText(snippet, { exact: false }).count()) > 0) {
+                    return true;
+                }
+                if ((await this.page.locator('body').getByText(snippet, { exact: false }).count()) > 0) {
+                    return true;
+                }
+            }
+
+            const input = await this.findVisibleCommentInput(this.page.locator('body'));
+            if (input) {
+                const remaining = await input
+                    .evaluate((el: HTMLTextAreaElement | HTMLElement) => {
+                        if (el instanceof HTMLTextAreaElement) {
+                            return el.value.trim();
+                        }
+                        return (el.textContent ?? '').trim();
+                    })
+                    .catch(() => 'pending');
+                if (remaining === '') {
+                    return true;
+                }
+            }
+
+            await this.humanBehavior.randomDelay(1500, 2500);
+        }
+
+        return false;
+    }
+
+    private static readonly COMMENT_INPUT_SELECTORS =
+        'textarea[aria-label*="comment" i], textarea[placeholder*="comment" i], ' +
+        '[contenteditable="true"][aria-label*="comment" i], div[role="textbox"][aria-label*="comment" i]';
+
+    private getCommentTextareaLocator(scope: Locator): Locator {
+        return scope.locator(InstagramBot.COMMENT_INPUT_SELECTORS);
+    }
+
+    private getCommentInputCandidates(scope: Locator): Locator[] {
+        return [
+            scope.getByRole('textbox', { name: /add a comment/i }),
+            scope.getByPlaceholder(/add a comment/i),
+            this.getCommentTextareaLocator(scope),
+        ];
+    }
+
+    private async findVisibleCommentInput(scope: Locator): Promise<Locator | null> {
+        for (const candidate of this.getCommentInputCandidates(scope)) {
+            if ((await candidate.count()) === 0) {
+                continue;
+            }
+
+            const input = candidate.first();
+            try {
+                if (await input.isVisible({ timeout: 1500 })) {
+                    await input.scrollIntoViewIfNeeded();
+                    return input;
+                }
+            } catch {
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    private async hasVideoPlaybackError(): Promise<boolean> {
+        return (
+            (await this.page.getByText("Sorry, we're having trouble playing this video", { exact: false }).count()) >
+            0
+        );
+    }
+
+    private async recoverFromVideoPlaybackError(postShortcode: string): Promise<void> {
+        if (!(await this.hasVideoPlaybackError())) {
+            return;
+        }
+
+        this.logger.warn('Video playback error detected. Retrying page load...');
+        this.capturedVideoUrl = undefined;
+
+        await this.page.reload({ waitUntil: 'domcontentloaded' });
+        await this.humanBehavior.randomizedWait(this.behavior.navigationWaitMs);
+        await this.dismissCommonPopups();
+
+        if (!(await this.hasVideoPlaybackError())) {
+            this.logger.success('Media loaded after reload.');
+            return;
+        }
+
+        if (!this.isReelUrl()) {
+            return;
+        }
+
+        const postLayoutUrl = `https://www.instagram.com/p/${postShortcode}/`;
+        this.logger.action(`Trying post layout instead of reel player: ${postLayoutUrl}`);
+        this.capturedVideoUrl = undefined;
+
+        await this.page.goto(postLayoutUrl, { waitUntil: 'domcontentloaded' });
+        await this.humanBehavior.randomizedWait(this.behavior.navigationWaitMs);
+        await this.dismissCommonPopups();
+
+        if (await this.hasVideoPlaybackError()) {
+            this.logger.warn(
+                'Video still unavailable after recovery. Set settings.browserChannel to "chrome" — bundled Chromium lacks H.264 codecs for Instagram reels.'
+            );
+        } else {
+            this.logger.success('Post layout loaded without video playback error.');
+        }
+    }
+
+    private async isCommentTextareaVisible(scope: Locator): Promise<boolean> {
+        return (await this.findVisibleCommentInput(scope)) !== null;
+    }
+
+    private async areCommentsDisabled(): Promise<boolean> {
+        const disabledMessages = [
+            'Comments on this post have been limited',
+            'Comments on this reel have been limited',
+            'Commenting has been turned off',
+            'comments are turned off',
+        ];
+
+        for (const message of disabledMessages) {
+            if ((await this.page.getByText(message, { exact: false }).count()) > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private async clickCommentToggle(): Promise<boolean> {
+        const isReel = this.isReelUrl();
+        const reelToggles = [
+            this.page.locator('main section svg[aria-label="Comment"]').locator('xpath=ancestor::button[1]'),
+            this.page.locator('main section svg[aria-label="Comment"]').locator('xpath=ancestor::*[@role="button"][1]'),
+        ];
+        const commonToggles = [
+            this.page.getByRole('button', { name: /^Comment$/i }),
+            this.page.getByRole('button', { name: /^View all comments$/i }),
+            this.page.getByText(/View all \d+ comments/i),
+            this.page.getByText(/\d+\s+comments?/i),
+            this.page.locator('svg[aria-label="Comment"]').locator('xpath=ancestor::button[1]'),
+            this.page.locator('svg[aria-label="Comment"]').locator('xpath=ancestor::*[@role="button"][1]'),
+            this.page.locator('article').getByRole('button', { name: /^Comment$/i }),
+            this.page.locator('section svg[aria-label="Comment"]').locator('xpath=ancestor::*[@role="button"][1]'),
+        ];
+        const toggleCandidates = isReel ? [...reelToggles, ...commonToggles] : commonToggles;
+
+        for (const candidate of toggleCandidates) {
+            if ((await candidate.count()) === 0) {
+                continue;
+            }
+
+            const toggle = candidate.first();
+            try {
+                if (!(await toggle.isVisible({ timeout: 1500 }))) {
+                    continue;
+                }
+
+                this.logger.action('Opening comment section...');
+                await toggle.scrollIntoViewIfNeeded();
+                await this.humanBehavior.hesitateAndClick(toggle);
+                await this.humanBehavior.randomDelay(isReel ? 2000 : 1000, isReel ? 4000 : 2500);
+                return true;
+            } catch {
+                continue;
+            }
+        }
+
+        return false;
+    }
+
+    private async waitForCommentInputVisible(timeoutMs: number): Promise<void> {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const input = await this.findVisibleCommentInput(this.page.locator('body'));
+            if (input) {
+                return;
+            }
+            await this.humanBehavior.randomDelay(300, 600);
+        }
+    }
+
+    private async resolveCommentScope(postRoot: Locator): Promise<Locator> {
+        const dialogWithComment = this.page.locator('div[role="dialog"]').filter({
+            has: this.page
+                .getByRole('textbox', { name: /add a comment/i })
+                .or(this.page.locator(InstagramBot.COMMENT_INPUT_SELECTORS)),
+        });
+
+        if ((await dialogWithComment.count()) > 0) {
+            const dialog = dialogWithComment.first();
+            if (await dialog.isVisible({ timeout: 1500 }).catch(() => false)) {
+                return dialog;
+            }
+        }
+
+        const scopes = [postRoot, this.page.locator('main').first(), this.page.locator('body')];
+        for (const scope of scopes) {
+            if (await this.isCommentTextareaVisible(scope)) {
+                return scope;
+            }
+        }
+
+        return postRoot;
+    }
+
+    private async openCommentSectionIfNeeded(postRoot: Locator): Promise<Locator> {
+        if (await this.areCommentsDisabled()) {
+            return postRoot;
+        }
+
+        const inputTimeout = this.isReelUrl() ? 10000 : 8000;
+        let commentScope = await this.resolveCommentScope(postRoot);
+        if (await this.isCommentTextareaVisible(commentScope)) {
+            return commentScope;
+        }
+
+        if (await this.clickCommentToggle()) {
+            await this.waitForCommentInputVisible(inputTimeout);
+            commentScope = await this.resolveCommentScope(postRoot);
+        }
+
+        if (!(await this.isCommentTextareaVisible(commentScope))) {
+            if (await this.clickCommentToggle()) {
+                await this.waitForCommentInputVisible(inputTimeout);
+                commentScope = await this.resolveCommentScope(postRoot);
+            }
+        }
+
+        return commentScope;
+    }
+
     private async getPostRootLocator(): Promise<Locator> {
         const dialog = this.page.locator('div[role="dialog"]').first();
         if ((await dialog.count()) > 0) {
@@ -382,38 +780,153 @@ export class InstagramBot {
         return this.page.locator('main').first();
     }
 
+    private async isPageUnavailable(): Promise<boolean> {
+        const unavailableMessages = [
+            "Sorry, this page isn't available.",
+            "This content isn't available right now",
+            'Page Not Found',
+        ];
+
+        for (const message of unavailableMessages) {
+            if ((await this.page.getByText(message, { exact: false }).count()) > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private async hasLoadablePostContent(): Promise<boolean> {
+        if (await this.isPageUnavailable()) {
+            return false;
+        }
+
+        if ((await this.page.locator('input[name="username"]').count()) > 0) {
+            return false;
+        }
+
+        const shortcode = extractPostShortcode(this.page.url());
+        if (!shortcode && !/\/(p|reels?)\//i.test(this.page.url())) {
+            return false;
+        }
+
+        const dialog = this.page.locator('div[role="dialog"]').first();
+        const article = this.page.locator('article').first();
+        const video = this.page.locator('video').first();
+        const postMedia = this.page.locator(
+            'main img[src*="cdninstagram"], main img[src*="instagram"], div[role="dialog"] img[src*="instagram"]'
+        );
+
+        const [hasDialog, hasArticle, hasVideo, hasImage] = await Promise.all([
+            dialog.isVisible({ timeout: 2000 }).catch(() => false),
+            article.isVisible({ timeout: 2000 }).catch(() => false),
+            video.isVisible({ timeout: 2000 }).catch(() => false),
+            postMedia
+                .first()
+                .isVisible({ timeout: 2000 })
+                .catch(() => false),
+        ]);
+
+        if (hasDialog || hasArticle || hasVideo || hasImage) {
+            return true;
+        }
+
+        const postRoot = await this.getPostRootLocator();
+        const caption = await this.extractPostCaption(postRoot);
+        return caption.trim().length > 0;
+    }
+
+    private async skipUnreadablePost(postShortcode: string, reason: string): Promise<InteractionResult> {
+        this.logger.warn(`${reason} Skipping.`);
+        await this.page.screenshot({
+            path: path.join(this.logsDir, `skip_unreadable_${this.config.username}_${postShortcode}.png`),
+        });
+        return 'SKIPPED';
+    }
+
     private async waitForPostLoaded(): Promise<void> {
+        const isReel = this.isReelUrl();
         const dialog = this.page.locator('div[role="dialog"]');
         const article = this.page.locator('article');
+        const video = this.page.locator('video');
 
         await Promise.race([
             dialog.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}),
             article.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}),
+            ...(isReel ? [video.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})] : []),
         ]);
 
-        await this.page
-            .locator('textarea[aria-label*="Add a comment"]')
-            .first()
-            .waitFor({ state: 'visible', timeout: 15000 })
-            .catch(() => {});
+        // Comment panel opens after AI generation — opening here closes before typing.
+        await this.humanBehavior.randomDelay(500, 1200);
+    }
+
+    private parseProfileHref(href: string | null): string | null {
+        if (!href) {
+            return null;
+        }
+
+        const match = href.match(/^\/([^/?#]+)\/?$/);
+        if (!match || match[1] === 'p' || match[1] === 'reel' || match[1] === 'reels') {
+            return null;
+        }
+
+        return match[1];
     }
 
     private async extractPostAuthorUsername(): Promise<string | null> {
         try {
             const postRoot = await this.getPostRootLocator();
-            const authorLink = postRoot.locator('header a[href^="/"]').first();
-            if ((await authorLink.count()) === 0) return null;
+            const authorCandidates = [
+                postRoot.locator('header a[href^="/"]').first(),
+                postRoot.locator('a[href^="/"][role="link"]').first(),
+                this.page.locator('header a[href^="/"]').first(),
+                this.page.locator('section a[href^="/"]').first(),
+            ];
 
-            const href = await authorLink.getAttribute('href');
-            if (!href) return null;
+            for (const authorLink of authorCandidates) {
+                if ((await authorLink.count()) === 0) {
+                    continue;
+                }
 
-            const match = href.match(/^\/([^/?#]+)\/?$/);
-            if (!match || match[1] === 'p' || match[1] === 'reel') return null;
+                const href = await authorLink.getAttribute('href');
+                const username = this.parseProfileHref(href);
+                if (username) {
+                    return username;
+                }
+            }
 
-            return match[1];
+            return null;
         } catch (e) {
             return null;
         }
+    }
+
+    private async extractPostCaption(postRoot: Locator): Promise<string> {
+        const captionCandidates = [
+            postRoot.locator('h1').first(),
+            postRoot.locator('span[dir="auto"]').first(),
+            this.page.locator('h1').first(),
+            this.page.locator('span[dir="auto"]').first(),
+        ];
+
+        for (const captionLocator of captionCandidates) {
+            try {
+                if ((await captionLocator.count()) === 0) {
+                    continue;
+                }
+
+                if (await captionLocator.isVisible({ timeout: 2000 })) {
+                    const text = (await captionLocator.textContent())?.trim() ?? '';
+                    if (text) {
+                        return text;
+                    }
+                }
+            } catch {
+                continue;
+            }
+        }
+
+        return '';
     }
 
     private async commentOnOpenPost(
@@ -427,14 +940,14 @@ export class InstagramBot {
         }
 
         const postRoot = await this.getPostRootLocator();
-        this.logger.success('Post content loaded.');
+        const isReel = this.isReelUrl();
+        this.logger.success(isReel ? 'Reel content loaded.' : 'Post content loaded.');
 
         this.logger.action('Extracting post caption...');
-        const captionLocator = postRoot.locator('h1').first();
         let postCaption = '';
         try {
-            if (await captionLocator.isVisible({ timeout: 2000 })) {
-                postCaption = (await captionLocator.textContent()) || '';
+            postCaption = await this.extractPostCaption(postRoot);
+            if (postCaption) {
                 this.logger.info(`Found caption: "${postCaption.substring(0, 50)}..."`);
             } else {
                 this.logger.info('No caption found on this post.');
@@ -448,15 +961,17 @@ export class InstagramBot {
         let postVideoUrl: string | undefined;
 
         try {
-            const videoErrorMessage = postRoot.getByText("Sorry, we're having trouble playing this video");
+            const videoPlaybackFailed = await this.hasVideoPlaybackError();
             const videoElement = postRoot.locator('video');
 
-            if ((await videoErrorMessage.count()) > 0 || (await videoElement.count()) > 0) {
+            if (videoPlaybackFailed) {
+                this.logger.warn('Video playback failed on page; using caption only for AI comment.');
+            } else if ((await videoElement.count()) > 0) {
                 this.logger.info('Detected video post');
 
                 if (this.capturedVideoUrl) {
                     postVideoUrl = this.capturedVideoUrl;
-                    this.logger.info(`Using captured video URL: ${this.capturedVideoUrl}`);
+                    this.logger.info(`Using captured video URL: ${this.capturedVideoUrl.substring(0, 80)}...`);
                 } else {
                     this.logger.warn('Video post detected but no video URL was captured from network requests');
                 }
@@ -495,25 +1010,48 @@ export class InstagramBot {
             postVideoUrl,
             this.channelSkillsContext
         );
-        this.logger.success(`AI Generated Comment: "${aiComment}"`);
+        const finalComment = this.ensureChannelMention(aiComment);
+        if (finalComment !== aiComment) {
+            this.logger.info(`Final comment with mention: "${finalComment}"`);
+        } else {
+            this.logger.success(`AI Generated Comment: "${aiComment}"`);
+        }
 
-        const commentTextarea = postRoot.locator('textarea[aria-label*="Add a comment"]');
-        if ((await commentTextarea.count()) === 0) {
-            this.logger.warn('Comments might be disabled for this post. Cannot find comment area.');
+        if (await this.areCommentsDisabled()) {
+            this.logger.warn('Comments are disabled or limited on this post/reel. Skipping.');
+            await this.page.screenshot({
+                path: path.join(this.logsDir, `comments_disabled_${this.config.username}_${postShortcode}.png`),
+            });
+            return 'SKIPPED';
+        }
+
+        const commentScope = await this.openCommentSectionIfNeeded(postRoot);
+        const commentInput = await this.findVisibleCommentInput(commentScope);
+
+        if (!commentInput) {
+            const videoFailed = await this.hasVideoPlaybackError();
+            this.logger.warn(
+                videoFailed
+                    ? 'Cannot find comment area — video failed to play (use settings.browserChannel: "chrome").'
+                    : 'Cannot find comment area — reel comment panel may be blocked or hidden.'
+            );
             await this.page.screenshot({
                 path: path.join(this.logsDir, `no_comment_area_error_${this.config.username}_${postShortcode}.png`),
             });
             return 'SKIPPED';
         }
 
-        await this.humanBehavior.jitteryMovement(commentTextarea.first());
+        await this.humanBehavior.jitteryMovement(commentInput);
         await this.humanBehavior.randomDelay(1000, 3000);
 
         this.logger.action('Typing comment...');
-        await this.humanBehavior.naturalTyping(commentTextarea.first(), aiComment);
+        await this.typeCommentWithMentions(commentInput, finalComment);
         await this.humanBehavior.randomDelay(1500, 4000);
 
-        const postButton = postRoot.locator('form').getByRole('button', { name: 'Post' });
+        let postButton = commentScope.locator('form').getByRole('button', { name: 'Post' });
+        if ((await postButton.count()) === 0) {
+            postButton = commentScope.getByRole('button', { name: 'Post' });
+        }
 
         if ((await postButton.count()) === 0 || !(await postButton.isEnabled())) {
             this.logger.error('Could not find an enabled "Post" button.');
@@ -524,22 +1062,27 @@ export class InstagramBot {
         }
 
         this.logger.action('Submitting the comment...');
-        await this.humanBehavior.hesitateAndClick(postButton);
-        await this.humanBehavior.randomDelay(4000, 7000);
+        await postButton.first().scrollIntoViewIfNeeded();
+        await this.humanBehavior.hesitateAndClick(postButton.first());
+        await this.humanBehavior.randomDelay(3000, 5000);
 
-        const ourComment = postRoot.getByText(aiComment);
-        if ((await ourComment.count()) > 0) {
-            this.logger.success(`Successfully commented on post (${postShortcode}).`);
+        const verified = await this.verifyCommentPosted(commentScope, finalComment);
+        if (verified) {
+            this.logger.success(`Successfully commented on ${isReel ? 'reel' : 'post'} (${postShortcode}).`);
         } else {
             this.logger.warn('Could not verify if comment was posted successfully.');
+            await this.page.screenshot({
+                path: path.join(this.logsDir, `comment_verify_error_${this.config.username}_${postShortcode}.png`),
+            });
+            return 'FAILED';
         }
 
         const postUrl = extractPostShortcode(this.page.url()) ? this.page.url() : undefined;
         this.commentHistory.recordComment(this.config.username, postShortcode, {
             postUrl,
-            commentText: aiComment,
+            commentText: finalComment,
         });
-        await this.logInteraction(postShortcode, 'comment', aiComment);
+        await this.logInteraction(postShortcode, 'comment', finalComment);
         return 'SUCCESS';
     }
 
@@ -547,6 +1090,13 @@ export class InstagramBot {
         const postShortcode = extractPostShortcode(postUrl) ?? postUrl;
 
         this.logger.header(`----- Starting Comment Task for ${postUrl} -----`);
+
+        if (!extractPostShortcode(postUrl)) {
+            return await this.skipUnreadablePost(
+                postShortcode,
+                `Invalid Instagram post/reel URL: ${postUrl}.`
+            );
+        }
 
         if (this.commentHistory.hasCommented(this.config.username, postShortcode)) {
             this.logger.warn(`Already commented on post ${postShortcode}. Skipping.`);
@@ -557,25 +1107,40 @@ export class InstagramBot {
             this.capturedVideoUrl = undefined;
             this.isCapturingVideo = true;
 
-            this.logger.action(`Navigating to post URL...`);
-            await this.page.goto(postUrl, { waitUntil: 'domcontentloaded' });
-            await this.humanBehavior.randomizedWait(this.behavior.navigationWaitMs);
+            const navigateUrl = this.resolveCommentNavigationUrl(postUrl);
+            await this.ensurePostViewLayout();
 
-            if ((await this.page.getByText("Sorry, this page isn't available.").count()) > 0) {
-                this.logger.warn('Post is unavailable or private. Skipping.');
-                return 'SKIPPED';
+            this.logger.action(`Navigating to post URL...`);
+            await this.page.goto(navigateUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await this.humanBehavior.randomizedWait(this.behavior.navigationWaitMs);
+            await this.ensurePostViewLayout(true);
+
+            if (await this.isPageUnavailable()) {
+                return await this.skipUnreadablePost(
+                    postShortcode,
+                    'Post is unavailable or private.'
+                );
             }
 
+            await this.recoverFromVideoPlaybackError(postShortcode);
+            await this.ensurePostViewLayout();
             await this.waitForPostLoaded();
+
+            if (!(await this.hasLoadablePostContent())) {
+                return await this.skipUnreadablePost(
+                    postShortcode,
+                    'Could not load post or reel content from URL.'
+                );
+            }
+
             const authorUsername = (await this.extractPostAuthorUsername()) ?? postShortcode;
 
             return await this.commentOnOpenPost(authorUsername, aiPromptHint, postShortcode);
         } catch (error: any) {
-            this.logger.error(`An error occurred during comment task for ${postUrl}: ${error.message}`);
-            await this.page.screenshot({
-                path: path.join(this.logsDir, `comment_task_error_${this.config.username}_${postShortcode}.png`),
-            });
-            return 'FAILED';
+            return await this.skipUnreadablePost(
+                postShortcode,
+                `Could not load post from ${postUrl}: ${error.message}.`
+            );
         } finally {
             this.isCapturingVideo = false;
         }
@@ -887,8 +1452,12 @@ export class InstagramBot {
 
             await this.humanBehavior.hesitateAndClick(latestPost);
 
-            await this.page.waitForSelector('div[role="dialog"]', { state: 'visible', timeout: 15000 });
-            this.logger.success('Post opened in a dialog.');
+            await Promise.race([
+                this.page.waitForSelector('div[role="dialog"]', { state: 'visible', timeout: 15000 }).catch(() => {}),
+                this.page.waitForURL(/\/(p|reel)\//, { timeout: 15000 }).catch(() => {}),
+            ]);
+            await this.waitForPostLoaded();
+            this.logger.success('Post or reel opened.');
             await this.humanBehavior.randomizedWait(this.behavior.shortWaitMs);
 
             const postShortcode = extractPostShortcode(this.page.url());

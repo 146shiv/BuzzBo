@@ -72,6 +72,20 @@ export class HumanBehavior {
 
         await element.click();
         await this.randomDelay(300, 800);
+        await this.typeText(text, options);
+    }
+
+    /** Type into the focused field without clicking (for mention-aware comment entry). */
+    async typeText(
+        text: string,
+        options: { min: number; max: number; typoChance?: number } = { min: 100, max: 350, typoChance: 0.05 }
+    ): Promise<void> {
+        await this.checkForPause();
+
+        if (this.developerMode) {
+            await this.page.keyboard.insertText(text);
+            return;
+        }
 
         const adjustedMin = options.min * this.sessionVariations.typingSpeedMultiplier;
         const adjustedMax = options.max * this.sessionVariations.typingSpeedMultiplier;

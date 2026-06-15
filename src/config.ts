@@ -47,6 +47,9 @@ export interface AccountHashtagSearchOverride {
 
 export type LoginMethod = 'credentials' | 'manual';
 
+/** How @mentionUsername is applied to generated comments */
+export type MentionPolicy = 'ai_only' | 'append_if_missing' | 'always';
+
 export type PostSourceMode =
     | 'new_post_added_to_account'
     | 'url_list'
@@ -73,13 +76,33 @@ export interface AccountConfig {
     aiPromptHint?: string;
     actionDelaySeconds?: ActionDelayConfig;
     targets?: string[];
+    /** Instagram handle to @tag in comments (without @), e.g. studyboapp */
+    mentionUsername?: string;
+    /**
+     * ai_only: tag only when AI wrote @handle (uses IG autocomplete).
+     * append_if_missing: add @mentionUsername if AI omitted it.
+     * always: same as append_if_missing.
+     */
+    mentionPolicy?: MentionPolicy;
 }
 
 export type AiProvider = 'gemini' | 'groq' | 'local';
 
+/** Playwright browser channel. Use `chrome` for Instagram video/reels (H.264 codecs). */
+export type BrowserChannel = 'chrome' | 'chromium' | 'msedge';
+
+export interface ViewportConfig {
+    width: number;
+    height: number;
+}
+
 export interface SettingsConfig {
     headless: boolean;
     developerMode: boolean;
+    /** Installed Chrome/Edge for media codecs; bundled Chromium cannot play Instagram H.264 video */
+    browserChannel: BrowserChannel;
+    /** Viewport for Instagram — small heights clip reel comment UI below the fold */
+    browserViewport: ViewportConfig;
     /** Which LLM backend to use for comment generation */
     aiProvider: AiProvider;
     googleAiApiKey: string;
@@ -263,6 +286,8 @@ export const config: Config = {
     settings: {
         headless: true,
         developerMode: false,
+        browserChannel: 'chrome',
+        browserViewport: { width: 1440, height: 900 },
         aiProvider: 'groq',
         googleAiApiKey: 'YOUR_GOOGLE_AI_API_KEY_HERE',
         groqApiKey: 'YOUR_GROQ_API_KEY_HERE',
@@ -338,6 +363,8 @@ export const config: Config = {
                api_search: { fetchBatchSize: 5, maxPostsToComment: 5 },
             },
             skillsFile: 'data/accounts/studybo.app/skills.txt',
+            mentionUsername: 'studyboapp',
+            mentionPolicy: 'append_if_missing',
             aiPromptHint: "Respond supportively to the post as a real student—helpful, relatable",
             actionDelaySeconds: { min: 80, max: 160 },
             targets: ['instagram', 'playwright'],

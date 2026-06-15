@@ -229,14 +229,28 @@ async function initializeBotSession(
     const sessionOptions = getSessionInitOptions(accountToUse, options);
     const headless = options.headless ?? sessionOptions.headless;
     const useManualLogin = options.forceManualLogin ?? sessionOptions.manualLogin;
-    const browser: Browser = await chromium.launch({ headless });
+    const browserChannel = config.settings.browserChannel ?? 'chrome';
+    const browserViewport = config.settings.browserViewport ?? { width: 1920, height: 1080 };
+    const launchOptions: Parameters<typeof chromium.launch>[0] = {
+        headless,
+        args: [
+            '--autoplay-policy=no-user-gesture-required',
+            `--window-size=${browserViewport.width},${browserViewport.height}`,
+        ],
+    };
+    if (browserChannel !== 'chromium') {
+        launchOptions.channel = browserChannel;
+    }
+    logger.info(`Launching browser (channel: ${browserChannel})...`);
+    const browser: Browser = await chromium.launch(launchOptions);
 
     try {
         const context = await browser.newContext({
             storageState: fs.existsSync(cookiePath) ? cookiePath : undefined,
             userAgent: fingerprint.userAgent,
-            viewport: fingerprint.viewport,
-            deviceScaleFactor: fingerprint.deviceScaleFactor,
+            viewport: browserViewport,
+            screen: browserViewport,
+            deviceScaleFactor: 1,
             locale: fingerprint.locale,
             timezoneId: fingerprint.timezoneId,
             colorScheme: fingerprint.colorScheme,
@@ -442,7 +456,7 @@ function waitForEnterCheckAccounts() {
 }
 
 function isValidInstagramPostUrl(url: string): boolean {
-    return /instagram\.com\/(p|reel)\/[^/?#\s]+/i.test(url);
+    return /instagram\.com\/(p|reels?)\/[^/?#\s]+/i.test(url);
 }
 
 function normalizePostUrl(url: string): string {
@@ -563,7 +577,7 @@ async function runUrlListForAccount(
             else if (commentResult === 'SKIPPED') result.skipped++;
             else result.failed++;
 
-            if (i < postUrls.length - 1) {
+            if (commentResult === 'SUCCESS' && i < postUrls.length - 1) {
                 const waitMs = bot.getRandomActionDelayMs();
                 globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next URL...`);
                 await delay(waitMs);
@@ -623,6 +637,7 @@ async function runHashtagScanForAccount(
     try {
         for (let h = 0; h < hashtags.length; h++) {
             const hashtag = hashtags[h];
+            let postedInHashtag = false;
             globalLogger.header(
                 `----- @${account.username} Hashtag ${h + 1}/${hashtags.length}: #${hashtag} -----`
             );
@@ -656,18 +671,19 @@ async function runHashtagScanForAccount(
                 if (commentResult === 'SUCCESS') {
                     commentedShortcodes.add(candidate.shortcode);
                     result.success++;
+                    postedInHashtag = true;
                 }
                 else if (commentResult === 'SKIPPED') result.skipped++;
                 else result.failed++;
 
-                if (i < rankedPosts.length - 1) {
+                if (commentResult === 'SUCCESS' && i < rankedPosts.length - 1) {
                     const waitMs = bot.getRandomActionDelayMs();
                     globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next post...`);
                     await delay(waitMs);
                 }
             }
 
-            if (h < hashtags.length - 1) {
+            if (postedInHashtag && h < hashtags.length - 1) {
                 const waitMs = bot.getRandomActionDelayMs();
                 globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next hashtag...`);
                 await delay(waitMs);
@@ -726,6 +742,7 @@ async function runHashtagApiScanForAccount(
     try {
         for (let h = 0; h < hashtags.length; h++) {
             const hashtag = hashtags[h];
+            let postedInHashtag = false;
             globalLogger.header(
                 `----- @${account.username} API Hashtag ${h + 1}/${hashtags.length}: #${hashtag} -----`
             );
@@ -807,13 +824,14 @@ async function runHashtagApiScanForAccount(
                     if (commentResult === 'SUCCESS') {
                         commentedShortcodes.add(candidate.shortcode);
                         result.success++;
+                        postedInHashtag = true;
                     } else if (commentResult === 'SKIPPED') {
                         result.skipped++;
                     } else {
                         result.failed++;
                     }
 
-                    if (i < rankedPosts.length - 1) {
+                    if (commentResult === 'SUCCESS' && i < rankedPosts.length - 1) {
                         const waitMs = bot.getRandomActionDelayMs();
                         globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next post...`);
                         await delay(waitMs);
@@ -828,7 +846,7 @@ async function runHashtagApiScanForAccount(
                 after = batch.nextAfter;
             }
 
-            if (h < hashtags.length - 1) {
+            if (postedInHashtag && h < hashtags.length - 1) {
                 const waitMs = bot.getRandomActionDelayMs();
                 globalLogger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next hashtag...`);
                 await delay(waitMs);
