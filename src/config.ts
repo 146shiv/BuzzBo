@@ -166,12 +166,15 @@ export function normalizeAccount(account: AccountConfig): AccountConfig {
         sourceMode = 'new_post_added_to_account';
     }
 
+    const usesHashtags = sourceMode === 'hashtag_list' || sourceMode === 'hashtag_api';
+
     return {
         ...account,
         loginMethod,
         sourceMode,
         password: loginMethod === 'manual' ? account.password ?? '' : account.password,
-        hashtags: account.hashtags ? normalizeHashtags(account.hashtags) : account.hashtags,
+        hashtags:
+            usesHashtags && account.hashtags ? normalizeHashtags(account.hashtags) : account.hashtags,
     };
 }
 
@@ -334,29 +337,54 @@ export const config: Config = {
         {
             enabled: true,
             username: 'studyboapp',
+            // username: '_reviewbo',
             loginMethod: 'manual',
             password: 'YOUR_PASSWORD_HERE',
             // sourceMode: 'url_list',
             // postUrlsFile: 'data/accounts/studybo.app/urls.txt',
+            // postUrlsFile: 'data/accounts/reviewbo.app/urls.txt',
             sourceMode: 'hashtag_list',
             // sourceMode: 'hashtag_api',
             hashtags: [
-                'studygram',
-                'studymotivation',
-                'studywithme',
-                'studytips',
-                'productivity',
-                'productivitytips',
-                'focus',
-                'pomodoro',
-                'studyplanner',
-                'timemanagement',
-                'studentlife',
-                'exampreparation',
-                'studentmotivation',
-                'consistency',
-                'goalsetting'
+                'studytracking',
+                'studytracker',
+                'studygoals',
+                'studyroutine',
+                'studystreak',
+                'dailystudy',
+                'smartstudy',
+                'focusedstudy',
+                'studyjourney',
+                'studyprogress',
+                'studentproductivity',
+                'studydiscipline',
+                'examready',
+                'examstrategy',
+                'studentgrowth',
+                'learnbetter',
+                'focussession',
+                'deepwork',
+                'goalachievement',
+                'academicsuccess',
+                'selfimprovement',
+                'studentcommunity'
             ],
+            // hashtags:[
+            //      'google reviews',
+            //      'google business profile',
+            //      'google my business',
+            //      'restaurant marketing',
+            //      'local seo',
+            //      'customer reviews',
+            //      'customer feedback'            ,
+            //      'small business marketing',
+            //     'online reputation',
+            //       'restaurant owner',
+            //       'gym owner',
+            //     'salon owner',
+            //    'clinic owner',
+            //    'hotel owner'    ,
+            // ],
             instagramApiAccessToken: 'EAAfZCptW4g1gBRpvyNF4kPGtZBCj88v4CeWCIi1tvZCtEk2opu56ZAaYLkqS3JJX1oFzmKgKAI1YK6eKaWn8Q6ZCgtFL2cdTNV4XH0RHkHPNXZCzZBRiP4ZC2lOWfg0pnhMCDIwH0u7tICTZCxF6Yy3MCCrk0AgADGGbBtSUiQulkVHUMtuPXeFRerc9QNnZBxnX4k54XWaLVeib7ljLN0hUI0NnLSjOZC6aUIlizLn6rRNMZAdY0IUX6iqCrXJwEZC4nrb5yEuG91aqQJXNtIfkYnVvX1AOY',
             instagramApiUserId: '17841473789521517',
             hashtagSearch: {
@@ -364,6 +392,7 @@ export const config: Config = {
             },
             skillsFile: 'data/accounts/studybo.app/skills.txt',
             mentionUsername: 'studyboapp',
+            // mentionUsername: '_reviewbo',
             mentionPolicy: 'append_if_missing',
             aiPromptHint: "Respond supportively to the post as a real student—helpful, relatable",
             actionDelaySeconds: { min: 80, max: 160 },

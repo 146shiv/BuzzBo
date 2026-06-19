@@ -477,7 +477,7 @@ const CAPTION_NOISE_PATTERNS = [
     /^audio/i,
 ];
 
-const MIN_SUBSTANTIVE_CAPTION_LENGTH = 20;
+const MIN_SUBSTANTIVE_CAPTION_LENGTH = 12;
 
 const GENERIC_STUDY_FALLBACK_COMMENTS = [
     'Splitting the day into pomodoro blocks honestly saved my focus during exam season @studyboapp',
@@ -490,6 +490,9 @@ const GENERIC_STUDY_FALLBACK_COMMENTS = [
 export function isSubstantiveCaption(caption: string): boolean {
     const trimmed = caption.trim();
     if (trimmed.length < MIN_SUBSTANTIVE_CAPTION_LENGTH) {
+        return false;
+    }
+    if (/^@?[a-zA-Z0-9._]+$/.test(trimmed) && trimmed.replace(/^@/, '').length < 18) {
         return false;
     }
     return !CAPTION_NOISE_PATTERNS.some(pattern => pattern.test(trimmed));

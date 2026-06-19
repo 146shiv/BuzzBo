@@ -906,32 +906,92 @@ export class InstagramBot {
         }
     }
 
-    private async extractPostCaption(postRoot: Locator): Promise<string> {
-        const captionCandidates = [
-            postRoot.locator('h1').first(),
-            postRoot.locator('span[dir="auto"]').first(),
-            this.page.locator('h1').first(),
-            this.page.locator('span[dir="auto"]').first(),
+    private looksLikeUsernameOnly(text: string): boolean {
+        const trimmed = text.trim().replace(/^@/, '');
+        if (!trimmed || trimmed.includes(' ')) {
+            return false;
+        }
+        return /^[a-zA-Z0-9._]+$/.test(trimmed) && trimmed.length < 25;
+    }
+
+    private async expandCaptionIfNeeded(postRoot: Locator): Promise<void> {
+        const moreCandidates = [
+            postRoot.getByRole('button', { name: /^more$/i }),
+            postRoot.locator('span').filter({ hasText: /^more$/i }),
+            this.page.getByRole('button', { name: /^more$/i }),
+            this.page.locator('span').filter({ hasText: /^more$/i }),
         ];
 
-        for (const captionLocator of captionCandidates) {
+        for (const candidate of moreCandidates) {
             try {
-                if ((await captionLocator.count()) === 0) {
+                if ((await candidate.count()) === 0) {
                     continue;
                 }
-
-                if (await captionLocator.isVisible({ timeout: 2000 })) {
-                    const text = (await captionLocator.textContent())?.trim() ?? '';
-                    if (text) {
-                        return text;
-                    }
+                const button = candidate.first();
+                if (await button.isVisible({ timeout: 1000 })) {
+                    await this.humanBehavior.hesitateAndClick(button);
+                    await this.humanBehavior.randomDelay(400, 900);
+                    return;
                 }
             } catch {
                 continue;
             }
         }
+    }
 
-        return '';
+    private async extractPostCaption(postRoot: Locator): Promise<string> {
+        await this.expandCaptionIfNeeded(postRoot);
+
+        const authorUsername = (await this.extractPostAuthorUsername())?.toLowerCase();
+        const candidates: string[] = [];
+
+        const captionLocators = [
+            postRoot.locator('h1'),
+            postRoot.locator('ul li span[dir="auto"]'),
+            postRoot.locator('span[dir="auto"]'),
+            this.page.locator('article h1'),
+            this.page.locator('article ul li span[dir="auto"]'),
+            this.page.locator('article span[dir="auto"]'),
+            this.page.locator('h1'),
+            this.page.locator('span[dir="auto"]'),
+        ];
+
+        for (const locator of captionLocators) {
+            const count = await locator.count();
+            for (let i = 0; i < Math.min(count, 20); i++) {
+                try {
+                    const el = locator.nth(i);
+                    if (!(await el.isVisible({ timeout: 500 }).catch(() => false))) {
+                        continue;
+                    }
+
+                    const text = (await el.textContent())?.replace(/\s+/g, ' ').trim() ?? '';
+                    if (text.length < 3) {
+                        continue;
+                    }
+                    if (authorUsername && text.replace(/^@/, '').toLowerCase() === authorUsername) {
+                        continue;
+                    }
+                    if (this.looksLikeUsernameOnly(text) && text.length < 18) {
+                        continue;
+                    }
+                    if (/^(more|less|follow|following|like|comment|share|save)$/i.test(text)) {
+                        continue;
+                    }
+                    candidates.push(text);
+                } catch {
+                    continue;
+                }
+            }
+        }
+
+        if (candidates.length === 0) {
+            return '';
+        }
+
+        const unique = [...new Set(candidates)];
+        unique.sort((a, b) => b.length - a.length);
+        return unique[0];
     }
 
     private async commentOnOpenPost(
@@ -980,6 +1040,14 @@ export class InstagramBot {
                 } else {
                     this.logger.warn('Video post detected but no video URL was captured from network requests');
                 }
+
+                if (!postImageUrl) {
+                    const poster = await videoElement.first().getAttribute('poster');
+                    if (poster && !poster.includes('static') && !poster.includes('sprite')) {
+                        postImageUrl = poster;
+                        this.logger.info(`Using video poster thumbnail for AI: ${poster.substring(0, 80)}...`);
+                    }
+                }
             } else {
                 const imageLocators = [
                     postRoot.locator('img[src*="instagram"]').first(),
@@ -1017,14 +1085,12 @@ export class InstagramBot {
 
         let aiComment: string;
         if (!hasContext) {
-            if (isVideoPost) {
-                return await this.skipUnreadablePost(
-                    postShortcode,
-                    'Video post has no analyzable caption or media for AI.'
-                );
-            }
             aiComment = getGenericStudyFallbackComment(this.getMentionHandle());
-            this.logger.warn('No post context available; using generic study fallback comment.');
+            this.logger.warn(
+                isVideoPost
+                    ? 'Video post lacks analyzable caption/media for AI; using generic study fallback comment.'
+                    : 'No post context available; using generic study fallback comment.'
+            );
         } else {
             this.logger.action('Generating AI comment...');
             try {
@@ -1037,23 +1103,11 @@ export class InstagramBot {
                     this.channelSkillsContext
                 );
             } catch (error: any) {
-                if (isVideoPost) {
-                    return await this.skipUnreadablePost(
-                        postShortcode,
-                        `AI could not generate comment: ${error.message}`
-                    );
-                }
                 this.logger.warn(`AI generation failed (${error.message}); using generic study fallback.`);
                 aiComment = getGenericStudyFallbackComment(this.getMentionHandle());
             }
 
             if (isUnusableAiComment(aiComment)) {
-                if (isVideoPost) {
-                    return await this.skipUnreadablePost(
-                        postShortcode,
-                        'AI returned a low-quality or unusable comment for video post.'
-                    );
-                }
                 this.logger.warn('AI returned unusable comment; using generic study fallback.');
                 aiComment = getGenericStudyFallbackComment(this.getMentionHandle());
             }
