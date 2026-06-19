@@ -1100,7 +1100,8 @@ export class InstagramBot {
                     aiPromptHint,
                     postImageUrl,
                     postVideoUrl,
-                    this.channelSkillsContext
+                    this.channelSkillsContext,
+                    this.getMentionHandle()
                 );
             } catch (error: any) {
                 this.logger.warn(`AI generation failed (${error.message}); using generic study fallback.`);

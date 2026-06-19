@@ -394,7 +394,8 @@ export const config: Config = {
             mentionUsername: 'studyboapp',
             // mentionUsername: '_reviewbo',
             mentionPolicy: 'append_if_missing',
-            aiPromptHint: "Respond supportively to the post as a real student—helpful, relatable",
+            aiPromptHint:
+                'Sarcastic witty comment anchored to the post topic. Roast the struggle, slip @studyboapp in as the punchline — make scrollers curious enough to check the profile.',
             actionDelaySeconds: { min: 80, max: 160 },
             targets: ['instagram', 'playwright'],
             // sourceMode filters where posts come from — same skillsFile for all modes:

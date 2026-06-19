@@ -143,14 +143,24 @@ export class AICommentGenerator {
         targetUsername: string,
         promptHint?: string,
         hasMedia = false,
-        channelSkillsContext?: string
+        channelSkillsContext?: string,
+        mentionHandle?: string
     ): string {
+        const caption = postText.trim();
         const sections: string[] = [
             `Write one Instagram comment on a post by @${targetUsername}.`,
             '',
-            '## Post',
-            postText.trim() || '(no caption — react to what you see in the attached media)',
+            '## Post caption',
+            caption || '(no caption — infer topic from attached media)',
         ];
+
+        if (caption) {
+            sections.push(
+                '',
+                '## Context rule',
+                'Reuse specific words, topics, or pain points from the caption above. Do not write a generic comment detached from this post.'
+            );
+        }
 
         if (hasMedia) {
             sections.push('', 'Media is attached — ground the comment in what you see, not just the caption.');
@@ -161,12 +171,15 @@ export class AICommentGenerator {
             sections.push('', '## Style guide', skills);
         }
 
-        sections.push(
-            '',
-            '## Mentions',
-            'When the style guide includes @studyboapp or another @handle, include the @ in your output.',
-            'Instagram needs the literal @username text — do not write "studybo app" without @.'
-        );
+        const handle = mentionHandle?.trim().replace(/^@/, '');
+        if (handle) {
+            sections.push(
+                '',
+                '## App mention',
+                `Include @${handle} in the comment when it fits the style guide.`,
+                'Instagram needs the literal @username — do not write the name without @.'
+            );
+        }
 
         if (promptHint?.trim()) {
             sections.push('', '## Extra hint', promptHint.trim());
@@ -176,10 +189,9 @@ export class AICommentGenerator {
             '',
             '## Output',
             'Return only the comment text. No quotes, labels, numbering, or explanation.',
+            'Be witty or lightly sarcastic — never bland, never a supportive student essay.',
             'NEVER say you lack context, need more information, or ask anyone for details.',
-            'NEVER describe what you cannot see — output a comment only.',
-            'NEVER admit confusion (e.g. "no idea", "not sure what this is", "what is going on").',
-            'If the post is unclear, write one short supportive study-life comment a student would post — never meta-commentary.'
+            'NEVER admit confusion. If unclear, write one sharp study-life one-liner with the app mention.'
         );
 
         return sections.join('\n');
@@ -367,7 +379,8 @@ export class AICommentGenerator {
         promptHint?: string,
         imageUrl?: string,
         videoUrl?: string,
-        channelSkillsContext?: string
+        channelSkillsContext?: string,
+        mentionHandle?: string
     ): Promise<string> {
         if (this.mockComments) {
             const comment = this.generateMockComment(postText, targetUsername);
@@ -400,7 +413,8 @@ export class AICommentGenerator {
             targetUsername,
             promptHint,
             hasMedia,
-            channelSkillsContext
+            channelSkillsContext,
+            mentionHandle
         );
 
         try {
@@ -465,6 +479,12 @@ const LOW_QUALITY_COMMENT_PATTERNS = [
     /(?:this|the) (?:post|reel|video) (?:is )?confus/i,
     /idk what/i,
     /\blol\b.*\b(?:no idea|don't know|not sure)/i,
+    /^(?:so )?relatable[.!?\s]*$/i,
+    /\b(?:love|loving) this (?:post|reel|video|content)\b/i,
+    /\bgreat (?:post|reel|video|content)\b/i,
+    /\bnice (?:post|reel|video|content)\b/i,
+    /\bawesome (?:post|reel|video|content)\b/i,
+    /\bsupportive\b.*\bstudent\b/i,
 ];
 
 const CAPTION_NOISE_PATTERNS = [
@@ -479,12 +499,12 @@ const CAPTION_NOISE_PATTERNS = [
 
 const MIN_SUBSTANTIVE_CAPTION_LENGTH = 12;
 
-const GENERIC_STUDY_FALLBACK_COMMENTS = [
-    'Splitting the day into pomodoro blocks honestly saved my focus during exam season @studyboapp',
-    'When the syllabus feels huge, planning one week at a time helps — @studyboapp makes that easier',
-    'Small daily study streaks beat cramming the night before @studyboapp',
-    'Breaking revision into timed blocks keeps the panic down during boards @studyboapp',
-    'A simple weekly study plan takes so much pressure off @studyboapp',
+const GENERIC_FALLBACK_TEMPLATES = [
+    'the syllabus is not going to panic-study itself — @{handle} is my toxic little accountability partner',
+    'watching study reels counts as studying in no universe… @{handle} is the only timer that scares me straight',
+    'my streak died so many times @{handle} should send condolences',
+    'planned to study all day, achieved nothing — @{handle} streak guilt hits different',
+    'pomodoro said 25 min focus, my brain said 25 min overthinking — @{handle} at least keeps score',
 ];
 
 export function isSubstantiveCaption(caption: string): boolean {
@@ -515,12 +535,10 @@ export function isUnusableAiComment(text: string): boolean {
 }
 
 export function getGenericStudyFallbackComment(mentionHandle?: string): string {
-    const comment =
-        GENERIC_STUDY_FALLBACK_COMMENTS[
-            Math.floor(Math.random() * GENERIC_STUDY_FALLBACK_COMMENTS.length)
-        ];
-    const handle = mentionHandle?.trim().replace(/^@/, '');
-    return handle ? `${comment} @${handle}` : comment;
+    const handle = mentionHandle?.trim().replace(/^@/, '') || 'studyboapp';
+    const template =
+        GENERIC_FALLBACK_TEMPLATES[Math.floor(Math.random() * GENERIC_FALLBACK_TEMPLATES.length)];
+    return template.replace('{handle}', handle);
 }
 
 export function hasActionablePostContext(
