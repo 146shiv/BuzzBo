@@ -1,0 +1,61 @@
+{
+  "name": "@buzzbo/core",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./dist/config/index.d.ts",
+      "default": "./dist/config/index.js"
+    },
+    "./ai/genai": {
+      "types": "./dist/ai/genai.d.ts",
+      "default": "./dist/ai/genai.js"
+    },
+    "./api/apiClient": {
+      "types": "./dist/api/apiClient.d.ts",
+      "default": "./dist/api/apiClient.js"
+    },
+    "./comments": {
+      "types": "./dist/comments/index.d.ts",
+      "default": "./dist/comments/index.js"
+    },
+    "./logger/logger": {
+      "types": "./dist/logger/logger.d.ts",
+      "default": "./dist/logger/logger.js"
+    },
+    "./platform/types": {
+      "types": "./dist/platform/types.d.ts",
+      "default": "./dist/platform/types.js"
+    },
+    "./ui/account-settings": {
+      "types": "./dist/ui/account-settings/index.d.ts",
+      "default": "./dist/ui/account-settings/index.js"
+    },
+    "./config/select-options": {
+      "types": "./dist/config/select-options.d.ts",
+      "default": "./dist/config/select-options.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^1.6.0",
+    "chalk": "^5.4.1"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "react": "^19.2.4"
+  }
+}

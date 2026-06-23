@@ -1,30 +1,41 @@
 {
-  "name": "instagram-playwright",
+  "name": "buzzbo",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Buzzbo — Instagram AI engagement bot (Electron desktop + Admin)",
+  "private": true,
+  "workspaces": [
+    "core",
+    "instagram-bot",
+    "electron-app",
+    "admin",
+    "packages/ui"
+  ],
+  "author": "Shivendra Yadav",
+  "license": "ISC",
   "scripts": {
-    "start": "ts-node src/main.ts",
-    "test": "ts-node src/main.ts test-comment",
-    "checker": "ts-node src/main.ts check-accounts",
-    "comment-urls": "ts-node src/main.ts comment-urls",
-    "hashtag-comment": "ts-node src/main.ts hashtag-comment",
+    "dev": "npm run dev -w @buzzbo/electron-app",
+    "dev:admin": "npm run dev -w @buzzbo/admin",
+    "build:core": "npm run build -w @buzzbo/core",
+    "build:instagram-bot": "npm run build -w @buzzbo/instagram-bot",
+    "build:electron": "npm run build -w @buzzbo/electron-app",
+    "build:admin": "npm run build -w @buzzbo/admin",
+    "build": "npm run build:core && npm run build:instagram-bot && npm run build:electron",
+    "dist": "npm run dist -w @buzzbo/electron-app",
+    "gate:phase-1": "bash scripts/phase-gates/phase-1.sh",
+    "gate:phase-2": "bash scripts/phase-gates/phase-2.sh",
+    "gate:phase-3": "bash scripts/phase-gates/phase-3.sh",
+    "gate:phase-4": "bash scripts/phase-gates/phase-4.sh",
+    "gate:phase-5": "bash scripts/phase-gates/phase-5.sh",
+    "gate:phase-6": "bash scripts/phase-gates/phase-6.sh",
+    "gate:phase-7": "bash scripts/phase-gates/phase-7.sh",
+    "gate:phase-8": "bash scripts/phase-gates/phase-8.sh",
+    "gate:phase-9": "bash scripts/phase-gates/phase-9.sh",
+    "gate:phase-10": "bash scripts/phase-gates/phase-10.sh",
+    "gate:all": "bash scripts/phase-gates/run-all.sh",
     "postinstall": "playwright install chromium"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "dependencies": {
-    "@google/genai": "^1.6.0",
-    "@types/node": "^24.0.3",
-    "axios": "^1.10.0",
-    "better-sqlite3": "^12.10.0",
-    "chalk": "^5.4.1",
-    "playwright": "^1.53.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.8.3"
-  },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13"
+    "playwright": "^1.53.1",
+    "typescript": "^5.8.3"
   }
 }

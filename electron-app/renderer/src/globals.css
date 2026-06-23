@@ -1,0 +1,43 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '../../../packages/ui/src/styles/tokens.css';
+
+@source "../../../packages/ui/src";
+@source "./**/*";
+
+:root {
+  --font-plus-jakarta: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-jetbrains-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+@layer components {
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="dialog-content"],
+  [data-slot="select-content"] {
+    background-color: var(--card);
+    color: var(--card-foreground);
+    border: 1px solid var(--border);
+    z-index: 100;
+  }
+
+  [data-slot="sheet-content"] {
+    background-color: var(--card);
+    color: var(--card-foreground);
+    z-index: 51;
+  }
+
+  [data-slot="dialog-overlay"],
+  [data-slot="sheet-overlay"] {
+    background-color: oklch(0 0 0 / 50%);
+    backdrop-filter: blur(4px);
+  }
+}

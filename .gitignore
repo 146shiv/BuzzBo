@@ -1,6 +1,13 @@
 node_modules/
+release/
+electron-app/out/
 data/cookies/
 data/logs/
 data/fingerprints/
 data/*.db
 data/*.db-*
+
+# Admin panel
+admin/.env.local
+admin/.next/
+admin/node_modules/

@@ -1,4 +1,4 @@
-# Instagram AI Commenter Bot — Agent Workflow
+# Buzzbo — Agent Workflow
 
 Agent guide for developing, debugging, and improving this Playwright + Gemini bot.
 
