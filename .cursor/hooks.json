@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "postToolUse": [
+      {
+        "command": ".cursor/hooks/config-secrets-reminder.sh",
+        "matcher": "Write|StrReplace"
+      }
+    ]
+  }
+}

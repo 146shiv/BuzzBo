@@ -1,0 +1,25 @@
+---
+description: TypeScript conventions for bot source files
+globs: src/**/*.ts
+alwaysApply: false
+---
+
+# TypeScript Bot Conventions
+
+- Match existing style: classes, private methods, chalk `Logger`, `async/await`
+- Minimal scope — fix only what the task requires
+- No new dependencies without explicit user approval
+- Use existing `config` types from `src/config.ts`; extend interfaces there when needed
+- Error messages: include context (`@${username}`, action name); log via `logger.error`
+- Do not add tests unless requested
+
+```typescript
+// BAD — silent catch
+try { await page.click(selector); } catch (e) {}
+
+// GOOD — log and rethrow or return status
+try { await page.click(selector); } catch (e: any) {
+  this.logger.error(`Click failed on comment button: ${e.message}`);
+  return 'FAILED';
+}
+```

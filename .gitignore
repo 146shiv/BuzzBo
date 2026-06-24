@@ -1,0 +1,20 @@
+node_modules/
+**/node_modules/
+
+data/cookies/
+data/logs/
+data/fingerprints/
+data/*.db
+data/*.db-*
+
+# Build outputs — do not commit
+release/
+admin/.next/
+dist/
+out/
+electron-app/out/
+
+# Secrets
+.env
+admin/.env
+*.env.local
