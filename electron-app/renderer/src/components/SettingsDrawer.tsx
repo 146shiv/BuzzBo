@@ -5,6 +5,8 @@ import {
     AccountSettingsPanel,
     SettingsSidebar,
     ACCOUNT_GROUPS,
+    getAccountGroups,
+    validateAccountSettings,
 } from '@buzzbo/core/ui/account-settings';
 import {
     Button,
@@ -42,8 +44,20 @@ export default function SettingsDrawer({
         return JSON.stringify(draft) !== original;
     }, [draft, original]);
 
+    const enabled = Boolean(draft?.enabled);
+    const groups = getAccountGroups(enabled);
+
+    useEffect(() => {
+        if (!enabled && group !== 'general') setGroup('general');
+    }, [enabled, group]);
+
     async function handleSave() {
         if (!draft || !accountId) return;
+        const validationError = validateAccountSettings(draft);
+        if (validationError) {
+            toast.error(validationError);
+            return;
+        }
         setSaving(true);
         try {
             const orig = JSON.parse(original) as Record<string, unknown>;
@@ -82,7 +96,7 @@ export default function SettingsDrawer({
                         <>
                             <div className="w-44 shrink-0 overflow-y-auto border-r border-border/60 bg-muted/20 p-3">
                                 <SettingsSidebar
-                                    groups={ACCOUNT_GROUPS}
+                                    groups={groups}
                                     active={group}
                                     onSelect={setGroup}
                                 />

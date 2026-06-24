@@ -9,7 +9,7 @@ export function platformAccountToBotConfig(account: DbPlatformAccount): AccountC
         platform: account.platform,
         enabled: account.enabled,
         username: account.username,
-        loginMethod: cfg.loginMethod,
+        loginMethod: cfg.loginMethod ?? 'manual',
         password: cfg.password,
         sourceMode: cfg.sourceMode as AccountConfig['sourceMode'],
         hashtags: cfg.hashtags,

@@ -6,6 +6,7 @@ data/logs/
 data/fingerprints/
 data/*.db
 data/*.db-*
+.env
 
 # Admin panel
 admin/.env.local

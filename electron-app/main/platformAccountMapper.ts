@@ -7,7 +7,7 @@ export function platformAccountToBotConfig(account: Record<string, unknown>): Ac
         platform: Number(account.platform),
         enabled: Boolean(account.enabled),
         username: String(account.username),
-        loginMethod: cfg.loginMethod as AccountConfig['loginMethod'],
+        loginMethod: (cfg.loginMethod as AccountConfig['loginMethod']) ?? 'manual',
         password: cfg.password as string | undefined,
         sourceMode: cfg.sourceMode as AccountConfig['sourceMode'],
         hashtags: cfg.hashtags as string[] | undefined,

@@ -9,8 +9,9 @@ import {
     SelectItem,
 } from '@/components/ui/select';
 import { AdminShell } from '@/components/admin/AdminShell';
-import { SettingsSidebar, GLOBAL_GROUPS, ACCOUNT_GROUPS } from '@/components/admin/SettingsSidebar';
+import { SettingsSidebar, GLOBAL_GROUPS, getAccountGroups } from '@/components/admin/SettingsSidebar';
 import { GlobalSettingsPanel, AccountSettingsPanel } from '@/components/admin/SettingsPanels';
+import { validateAccountSettings } from '@buzzbo/core/ui/account-settings';
 import { ManageAccountsSheet } from '@/components/admin/ManageAccountsSheet';
 import { ChangePasswordDialog } from '@/components/admin/ChangePasswordDialog';
 import { apiFetch } from '@/lib/api';
@@ -69,6 +70,15 @@ export function AppSettingsPage({ userId }: { userId: string }) {
         }
     }, [selectedAccountId, accounts]);
 
+    const accountEnabled = Boolean(accountDraft?.enabled);
+    const accountGroups = getAccountGroups(accountEnabled);
+
+    useEffect(() => {
+        if (selectedAccountId !== 'global' && !accountEnabled && activeGroup !== 'general') {
+            setActiveGroup('general');
+        }
+    }, [selectedAccountId, accountEnabled, activeGroup]);
+
     async function saveConfigAssignment(id: string | null) {
         await apiFetch(`/api/admin/users/${userId}/config`, {
             method: 'PATCH',
@@ -78,6 +88,13 @@ export function AppSettingsPage({ userId }: { userId: string }) {
     }
 
     async function handleSave() {
+        if (selectedAccountId !== 'global' && accountDraft) {
+            const validationError = validateAccountSettings(accountDraft);
+            if (validationError) {
+                toast.error(validationError);
+                return;
+            }
+        }
         setSaving(true);
         try {
             if (selectedAccountId === 'global') {
@@ -116,7 +133,7 @@ export function AppSettingsPage({ userId }: { userId: string }) {
         }
     }
 
-    const groups = selectedAccountId === 'global' ? GLOBAL_GROUPS : ACCOUNT_GROUPS;
+    const groups = selectedAccountId === 'global' ? GLOBAL_GROUPS : accountGroups;
     const configOptions = configurations.map(c => ({ value: c.id, label: c.name }));
     const accountOptions = [
         { value: 'global', label: 'Global Settings' },

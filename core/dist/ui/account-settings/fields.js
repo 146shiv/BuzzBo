@@ -7,12 +7,12 @@ exports.LabeledSelect = LabeledSelect;
 exports.NumberInput = NumberInput;
 exports.DelayPair = DelayPair;
 const jsx_runtime_1 = require("react/jsx-runtime");
-const inputClass = 'flex h-9 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-1 text-sm text-slate-100 shadow-sm';
-const textareaClass = 'flex min-h-[80px] w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100';
-const labelClass = 'text-sm font-medium text-slate-200';
-const hintClass = 'text-xs text-slate-400';
-function Field({ label, children, hint, }) {
-    return ((0, jsx_runtime_1.jsxs)("div", { className: "space-y-2", children: [(0, jsx_runtime_1.jsx)("label", { className: labelClass, children: label }), children, hint && (0, jsx_runtime_1.jsx)("p", { className: hintClass, children: hint })] }));
+const inputClass = 'flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm text-foreground shadow-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30';
+const textareaClass = 'flex min-h-[80px] w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30';
+const labelClass = 'text-sm font-medium text-foreground';
+const hintClass = 'text-xs text-muted-foreground';
+function Field({ label, children, hint, required, }) {
+    return ((0, jsx_runtime_1.jsxs)("div", { className: "space-y-2", children: [(0, jsx_runtime_1.jsxs)("label", { className: labelClass, children: [label, required && (0, jsx_runtime_1.jsx)("span", { className: "ml-1 text-destructive", children: "*" })] }), children, hint && (0, jsx_runtime_1.jsx)("p", { className: hintClass, children: hint })] }));
 }
 function Input(props) {
     return (0, jsx_runtime_1.jsx)("input", { className: inputClass, ...props });

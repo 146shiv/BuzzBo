@@ -1,7 +1,8 @@
-export declare function Field({ label, children, hint, }: {
+export declare function Field({ label, children, hint, required, }: {
     label: string;
     children: React.ReactNode;
     hint?: string;
+    required?: boolean;
 }): import("react").JSX.Element;
 export declare function Input(props: React.InputHTMLAttributes<HTMLInputElement>): import("react").JSX.Element;
 export declare function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>): import("react").JSX.Element;

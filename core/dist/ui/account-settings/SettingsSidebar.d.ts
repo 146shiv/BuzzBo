@@ -18,24 +18,43 @@ export declare const ACCOUNT_GROUPS: readonly [{
     readonly id: "general";
     readonly label: "General";
 }, {
-    readonly id: "content";
-    readonly label: "Content";
+    readonly id: "source-settings";
+    readonly label: "Source Settings";
 }, {
     readonly id: "mentions";
     readonly label: "Mentions";
 }, {
-    readonly id: "ai-hint";
-    readonly label: "AI Hint";
+    readonly id: "ai-config";
+    readonly label: "AI Config";
 }, {
     readonly id: "hashtag-override";
     readonly label: "Hashtag Overrides";
 }, {
-    readonly id: "api-creds";
-    readonly label: "API Credentials";
-}, {
     readonly id: "delays";
     readonly label: "Delays";
 }];
+export declare function getAccountGroups(enabled: boolean): readonly [{
+    readonly id: "general";
+    readonly label: "General";
+}, {
+    readonly id: "source-settings";
+    readonly label: "Source Settings";
+}, {
+    readonly id: "mentions";
+    readonly label: "Mentions";
+}, {
+    readonly id: "ai-config";
+    readonly label: "AI Config";
+}, {
+    readonly id: "hashtag-override";
+    readonly label: "Hashtag Overrides";
+}, {
+    readonly id: "delays";
+    readonly label: "Delays";
+}] | {
+    readonly id: "general";
+    readonly label: "General";
+}[];
 export declare function SettingsSidebar({ groups, active, onSelect, }: {
     groups: readonly {
         id: string;

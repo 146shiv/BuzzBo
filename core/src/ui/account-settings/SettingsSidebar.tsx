@@ -10,13 +10,16 @@ export const GLOBAL_GROUPS = [
 
 export const ACCOUNT_GROUPS = [
     { id: 'general', label: 'General' },
-    { id: 'content', label: 'Content' },
+    { id: 'source-settings', label: 'Source Settings' },
     { id: 'mentions', label: 'Mentions' },
-    { id: 'ai-hint', label: 'AI Hint' },
+    { id: 'ai-config', label: 'AI Config' },
     { id: 'hashtag-override', label: 'Hashtag Overrides' },
-    { id: 'api-creds', label: 'API Credentials' },
     { id: 'delays', label: 'Delays' },
 ] as const;
+
+export function getAccountGroups(enabled: boolean) {
+    return enabled ? ACCOUNT_GROUPS : ACCOUNT_GROUPS.filter(g => g.id === 'general');
+}
 
 export function SettingsSidebar({
     groups,

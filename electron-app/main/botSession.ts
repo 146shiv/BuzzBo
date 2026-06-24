@@ -31,8 +31,9 @@ export async function initializeBotSession(
         fs.writeFileSync(fingerprintPath, JSON.stringify(fingerprint, null, 2));
     }
 
-    const headless = options.headless ?? settings.headless;
-    const useManualLogin = options.forceManualLogin ?? account.loginMethod === 'manual';
+    const loginMethod = account.loginMethod ?? 'manual';
+    const useManualLogin = options.forceManualLogin ?? loginMethod === 'manual';
+    const headless = useManualLogin ? false : (options.headless ?? settings.headless);
     const browserChannel = settings.browserChannel ?? 'chrome';
     const browserViewport = settings.browserViewport ?? { width: 1440, height: 900 };
 
@@ -71,8 +72,12 @@ export async function initializeBotSession(
 
         if (useManualLogin) {
             await bot.initWithManualLogin(context, async () => {
-                logger.info('Complete Instagram login in the browser, then continue in Buzzbo.');
-                await new Promise<void>(resolve => setTimeout(resolve, 15000));
+                logger.info('Complete Instagram login in the browser window.');
+                const maxWaitMs = 10 * 60 * 1000;
+                const started = Date.now();
+                while (Date.now() - started < maxWaitMs) {
+                    await new Promise<void>(resolve => setTimeout(resolve, 2000));
+                }
             });
         } else {
             await bot.init(context);

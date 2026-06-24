@@ -9,14 +9,19 @@ export function Field({
     label,
     children,
     hint,
+    required,
 }: {
     label: string;
     children: React.ReactNode;
     hint?: string;
+    required?: boolean;
 }) {
     return (
         <div className="space-y-2">
-            <label className={labelClass}>{label}</label>
+            <label className={labelClass}>
+                {label}
+                {required && <span className="ml-1 text-destructive">*</span>}
+            </label>
             {children}
             {hint && <p className={hintClass}>{hint}</p>}
         </div>

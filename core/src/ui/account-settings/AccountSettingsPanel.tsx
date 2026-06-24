@@ -7,6 +7,7 @@ import {
     SOURCE_MODE_OPTIONS,
 } from '../../config/select-options';
 import { DelayPair, Field, Input, LabeledSelect, NumberInput, Textarea } from './fields';
+import { NoteEditorField } from './NoteEditorField';
 
 export function AccountSettingsPanel({
     group,
@@ -21,6 +22,10 @@ export function AccountSettingsPanel({
     const patchConfig = (partial: Record<string, unknown>) =>
         onChange({ ...account, config: { ...config, ...partial } });
 
+    const enabled = Boolean(account.enabled);
+    const loginMethod = String(config.loginMethod || 'manual');
+    const sourceMode = String(config.sourceMode || 'hashtag_list');
+
     switch (group) {
         case 'general':
             return (
@@ -32,80 +37,116 @@ export function AccountSettingsPanel({
                             onValueChange={v => onChange({ ...account, enabled: v === 'true' })}
                         />
                     </Field>
-                    <Field label="Username">
-                        <Input
-                            value={String(account.username || '')}
-                            onChange={e => onChange({ ...account, username: e.target.value })}
-                        />
-                    </Field>
-                    <Field label="Login Method">
-                        <LabeledSelect
-                            options={LOGIN_METHOD_OPTIONS}
-                            value={String(config.loginMethod || 'manual')}
-                            onValueChange={v => patchConfig({ loginMethod: v })}
-                        />
-                    </Field>
-                    <Field label="Password">
-                        <Input
-                            type="password"
-                            value={String(config.password || '')}
-                            onChange={e => patchConfig({ password: e.target.value })}
-                        />
-                    </Field>
-                    <Field label="Source Mode">
-                        <LabeledSelect
-                            options={SOURCE_MODE_OPTIONS}
-                            value={String(config.sourceMode || 'hashtag_list')}
-                            onValueChange={v => patchConfig({ sourceMode: v })}
-                        />
-                    </Field>
+                    {enabled && (
+                        <>
+                            <Field label="Login Method">
+                                <LabeledSelect
+                                    options={LOGIN_METHOD_OPTIONS}
+                                    value={loginMethod}
+                                    onValueChange={v => patchConfig({ loginMethod: v })}
+                                />
+                            </Field>
+                            {loginMethod === 'credentials' && (
+                                <>
+                                    <Field label="Username" required>
+                                        <Input
+                                            value={String(account.username || '')}
+                                            onChange={e =>
+                                                onChange({ ...account, username: e.target.value })
+                                            }
+                                        />
+                                    </Field>
+                                    <Field label="Password" required>
+                                        <Input
+                                            type="password"
+                                            value={String(config.password || '')}
+                                            onChange={e => patchConfig({ password: e.target.value })}
+                                        />
+                                    </Field>
+                                </>
+                            )}
+                        </>
+                    )}
                 </div>
             );
 
-        case 'content':
+        case 'source-settings':
             return (
                 <div className="space-y-4">
-                    <Field label="Skills / Style Guide">
-                        <Textarea
-                            className="min-h-[200px] font-mono text-sm"
-                            value={String(account.skills_content || '')}
-                            onChange={e => onChange({ ...account, skills_content: e.target.value })}
+                    <Field label="Source Mode">
+                        <LabeledSelect
+                            options={SOURCE_MODE_OPTIONS}
+                            value={sourceMode}
+                            onValueChange={v => patchConfig({ sourceMode: v })}
                         />
                     </Field>
-                    <Field label="Hashtags (one per line)" hint="Without # prefix">
-                        <Textarea
-                            value={((config.hashtags as string[]) || []).join('\n')}
-                            onChange={e =>
-                                patchConfig({
-                                    hashtags: e.target.value
-                                        .split('\n')
-                                        .map(s => s.trim().replace(/^#/, ''))
-                                        .filter(Boolean),
-                                })
-                            }
-                        />
-                    </Field>
-                    <Field label="Post URLs (one per line)">
-                        <Textarea
-                            value={((account.post_urls as string[]) || []).join('\n')}
-                            onChange={e =>
-                                onChange({
-                                    ...account,
-                                    post_urls: e.target.value.split('\n').map(s => s.trim()).filter(Boolean),
-                                })
-                            }
-                        />
-                    </Field>
-                    <Field label="Monitor Targets (one per line)">
-                        <Textarea
-                            value={((config.targets as string[]) || []).join('\n')}
-                            onChange={e =>
-                                patchConfig({
-                                    targets: e.target.value.split('\n').map(s => s.trim()).filter(Boolean),
-                                })
-                            }
-                        />
-                    </Field>
+                    {sourceMode === 'hashtag_list' && (
+                        <Field label="Hashtags (one per line)" hint="Without # prefix" required>
+                            <Textarea
+                                value={((config.hashtags as string[]) || []).join('\n')}
+                                onChange={e =>
+                                    patchConfig({
+                                        hashtags: e.target.value
+                                            .split('\n')
+                                            .map(s => s.trim().replace(/^#/, ''))
+                                            .filter(Boolean),
+                                    })
+                                }
+                            />
+                        </Field>
+                    )}
+                    {sourceMode === 'url_list' && (
+                        <Field label="Post URLs (one per line)" required>
+                            <Textarea
+                                value={((account.post_urls as string[]) || []).join('\n')}
+                                onChange={e =>
+                                    onChange({
+                                        ...account,
+                                        post_urls: e.target.value
+                                            .split('\n')
+                                            .map(s => s.trim())
+                                            .filter(Boolean),
+                                    })
+                                }
+                            />
+                        </Field>
+                    )}
+                    {sourceMode === 'hashtag_api' && (
+                        <>
+                            <Field label="Instagram API Access Token" required>
+                                <Input
+                                    type="password"
+                                    value={String(config.instagramApiAccessToken || '')}
+                                    onChange={e =>
+                                        patchConfig({ instagramApiAccessToken: e.target.value })
+                                    }
+                                />
+                            </Field>
+                            <Field label="Instagram API User ID" required>
+                                <Input
+                                    value={String(config.instagramApiUserId || '')}
+                                    onChange={e =>
+                                        patchConfig({ instagramApiUserId: e.target.value })
+                                    }
+                                />
+                            </Field>
+                        </>
+                    )}
+                    {sourceMode === 'new_post_added_to_account' && (
+                        <Field label="Monitor Targets (one per line)" required>
+                            <Textarea
+                                value={((config.targets as string[]) || []).join('\n')}
+                                onChange={e =>
+                                    patchConfig({
+                                        targets: e.target.value
+                                            .split('\n')
+                                            .map(s => s.trim())
+                                            .filter(Boolean),
+                                    })
+                                }
+                            />
+                        </Field>
+                    )}
                 </div>
             );
 
@@ -128,33 +169,26 @@ export function AccountSettingsPanel({
                 </div>
             );
 
-        case 'ai-hint':
+        case 'ai-config':
             return (
-                <Field label="AI Prompt Hint">
-                    <Textarea
-                        className="min-h-[120px]"
-                        value={String(config.aiPromptHint || '')}
-                        onChange={e => patchConfig({ aiPromptHint: e.target.value })}
+                <div className="space-y-8">
+                    <NoteEditorField
+                        label="Skills / Style Guide"
+                        hint="Define tone, topics, and comment style for this handle."
+                        value={String(account.skills_content || '')}
+                        onChange={skills_content => onChange({ ...account, skills_content })}
+                        placeholder="Example: Friendly study tips account. Keep comments short, supportive, and on-topic..."
+                        monospace
+                        minHeightClass="min-h-[400px]"
                     />
-                </Field>
-            );
-
-        case 'api-creds':
-            return (
-                <div className="space-y-4">
-                    <Field label="Instagram API Access Token">
-                        <Input
-                            type="password"
-                            value={String(config.instagramApiAccessToken || '')}
-                            onChange={e => patchConfig({ instagramApiAccessToken: e.target.value })}
-                        />
-                    </Field>
-                    <Field label="Instagram API User ID">
-                        <Input
-                            value={String(config.instagramApiUserId || '')}
-                            onChange={e => patchConfig({ instagramApiUserId: e.target.value })}
-                        />
-                    </Field>
+                    <NoteEditorField
+                        label="AI Prompt Hint"
+                        hint="Extra instructions appended when generating each comment."
+                        value={String(config.aiPromptHint || '')}
+                        onChange={aiPromptHint => patchConfig({ aiPromptHint })}
+                        placeholder="Example: Mention our app only when relevant. Avoid hashtags."
+                        minHeightClass="min-h-[80px]"
+                    />
                 </div>
             );
 
