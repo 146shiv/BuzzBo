@@ -5,10 +5,10 @@
       "value": "8VBCCwB1v6GlLtcaEmm6uv",
       "domain": ".instagram.com",
       "path": "/",
-      "expires": 1816938448.210654,
+      "expires": 1816943818.174487,
       "httpOnly": false,
       "secure": true,
-      "sameSite": "None"
+      "sameSite": "Lax"
     },
     {
       "name": "datr",
@@ -45,7 +45,7 @@
       "value": "1440x900",
       "domain": ".instagram.com",
       "path": "/",
-      "expires": 1782983277,
+      "expires": 1782988619,
       "httpOnly": false,
       "secure": true,
       "sameSite": "Lax"
@@ -55,7 +55,7 @@
       "value": "80435756273",
       "domain": ".instagram.com",
       "path": "/",
-      "expires": 1790154476.927473,
+      "expires": 1790159818.174583,
       "httpOnly": false,
       "secure": true,
       "sameSite": "None"
@@ -79,6 +79,36 @@
       "httpOnly": false,
       "secure": true,
       "sameSite": "None"
+    },
+    {
+      "name": "test_cookie",
+      "value": "CheckForPermission",
+      "domain": ".doubleclick.net",
+      "path": "/",
+      "expires": 1782384690.125554,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "fr",
+      "value": "03FtmcUnSbmrItNPb.AWdkLVKzPh2PQbybEc8HF9FWSDykuRlmgZRlZWSjlNyRZwLozQE.BqPQSw..AAA.0.0.BqPQSw.AWcPZewkCcoOrTzl8Sb5JP1HBqA",
+      "domain": ".facebook.com",
+      "path": "/",
+      "expires": 1790159792.755317,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "rur",
+      "value": "\"HIL\\05480435756273\\0541813919818:01ff825e4aa3add9576ed216849276566c64485c633585fad7364284991362f9f62566b3\"",
+      "domain": ".instagram.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
     }
   ],
   "origins": [
@@ -86,28 +116,32 @@
       "origin": "https://www.instagram.com",
       "localStorage": [
         {
-          "name": "chatd-deviceid",
-          "value": "ccb3c88c-0960-4b91-91ab-cb20ae438bd9"
+          "name": "ig_notifications_sessions_dismiss",
+          "value": "{\"currentSessionNumber\":1,\"lastDismissedDate\":\"Thu Jun 25 2026 11:36:28 GMT+0100 (British Summer Time)\"}"
         },
         {
-          "name": "hb_timestamp",
-          "value": "1782378448897"
+          "name": "chatd-deviceid",
+          "value": "41d521b8-358e-43a4-86f2-ef2945afba04"
         },
         {
           "name": "IGSession",
-          "value": "34of8p:1782380277880"
+          "value": "eqnmto:1782385627357"
         },
         {
           "name": "pigeon_state",
           "value": "{\"lastDeviceInfoTime\":0}"
         },
         {
-          "name": "signal_flush_timestamp",
-          "value": "1782378448908"
+          "name": "fr",
+          "value": "AVi-nkhUlxbIn3Fc_1iPe520KGMkQvhJDspokwwDHhTdo407NC0E2hgZfe9yG4QnOBhzJwepi5nnmbJ9ojDPj1chdInL4Pt_O44y9FY1XJksT0QmfYeRdOJBDURj13w"
+        },
+        {
+          "name": "pixel_fire_ts",
+          "value": "1782383789049"
         },
         {
           "name": "Session",
-          "value": "coqgo8:1782378512880"
+          "value": "5yxl5k:1782383862357"
         },
         {
           "name": "banzai:last_storage_flush",
@@ -116,6 +150,32 @@
         {
           "name": "caa_feta_onetap_users_migrated",
           "value": "true"
+        },
+        {
+          "name": "hb_timestamp",
+          "value": "1782383788731"
+        },
+        {
+          "name": "signal_flush_timestamp",
+          "value": "1782383788737"
+        }
+      ]
+    },
+    {
+      "origin": "https://www.fbsbx.com",
+      "localStorage": [
+        {
+          "name": "_gcl_ls",
+          "value": "{\"schema\":\"gcl\",\"version\":1,\"gsid_dc\":{\"value\":{\"joinId\":\"BcuzRpceHsLpdKC2ROPAva76cBW6V8kcEw\",\"lastJoinedTimeMs\":1782383789991},\"expires\":1782384089991},\"gcl_ctr\":{\"value\":{\"value\":0,\"timeouts\":0,\"errors\":0,\"eopCount\":0,\"creationTimeMs\":1782383790003},\"expires\":1790159790003},\"last_convs\":{\"value\":[],\"expires\":1790159790003}}"
+        }
+      ]
+    },
+    {
+      "origin": "https://www.facebook.com",
+      "localStorage": [
+        {
+          "name": "Session",
+          "value": "0riayv:1782383857988"
         }
       ]
     }
