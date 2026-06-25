@@ -6,7 +6,7 @@ import {
     MENTION_POLICY_OPTIONS,
     SOURCE_MODE_OPTIONS,
 } from '../../config/select-options';
-import { DelayPair, Field, Input, LabeledSelect, NumberInput, Textarea } from './fields';
+import { DelayPair, Field, Input, LabeledSelect, NumberInput, SecretInput, Textarea } from './fields';
 import { NoteEditorField } from './NoteEditorField';
 
 export function AccountSettingsPanel({
@@ -57,8 +57,7 @@ export function AccountSettingsPanel({
                                         />
                                     </Field>
                                     <Field label="Password" required>
-                                        <Input
-                                            type="password"
+                                        <SecretInput
                                             value={String(config.password || '')}
                                             onChange={e => patchConfig({ password: e.target.value })}
                                         />
@@ -114,8 +113,7 @@ export function AccountSettingsPanel({
                     {sourceMode === 'hashtag_api' && (
                         <>
                             <Field label="Instagram API Access Token" required>
-                                <Input
-                                    type="password"
+                                <SecretInput
                                     value={String(config.instagramApiAccessToken || '')}
                                     onChange={e =>
                                         patchConfig({ instagramApiAccessToken: e.target.value })

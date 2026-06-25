@@ -2,11 +2,16 @@ import { Page, BrowserContext } from 'playwright';
 import { AccountConfig, SettingsConfig, UiHashtagSearchConfig } from '@buzzbo/core/config';
 import { PauseState } from './humanBehavior';
 import { Logger } from '@buzzbo/core/logger/logger';
-import { AICommentGenerator } from '@buzzbo/core/ai/genai';
+import { AICommentGeneratorAdapter } from '@buzzbo/core/ai/genai';
 import type { CommentHistoryAdapter } from '@buzzbo/core/comments';
 import { HashtagPostCandidate } from './hashtagRanking';
 export type InteractionResult = 'SUCCESS' | 'SKIPPED' | 'FAILED';
 export type { HashtagPostCandidate } from './hashtagRanking';
+export interface BotRuntimePaths {
+    cookiePath?: string;
+    logsDir?: string;
+    enableCsvLog?: boolean;
+}
 export declare class InstagramBot {
     private context;
     private page;
@@ -26,7 +31,8 @@ export declare class InstagramBot {
     private capturedVideoUrl;
     private isCapturingVideo;
     private readonly logsDir;
-    constructor(accountConfig: AccountConfig, globalSettings: SettingsConfig, pauseState: PauseState, logger: Logger, aiGenerator: AICommentGenerator, commentHistory: CommentHistoryAdapter, channelSkillsContext?: string);
+    private readonly enableCsvLog;
+    constructor(accountConfig: AccountConfig, globalSettings: SettingsConfig, pauseState: PauseState, logger: Logger, aiGenerator: AICommentGeneratorAdapter, commentHistory: CommentHistoryAdapter, channelSkillsContext?: string, runtimePaths?: BotRuntimePaths);
     private logInteraction;
     private ensureCookiesAreSaved;
     getPage(): Page;

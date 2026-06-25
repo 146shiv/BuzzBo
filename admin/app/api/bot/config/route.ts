@@ -3,6 +3,7 @@ import { requireAuth } from '@/lib/auth/guards';
 import { getRepositories } from '@/lib/db';
 import { botConfigFromDb } from '@/lib/botConfig';
 import { DEFAULT_SETTINGS } from '@shared/config-types';
+import { sanitizeBotSettings } from '@buzzbo/core/config';
 
 export async function GET(request: Request) {
     const session = await requireAuth(request, ['user', 'admin']);
@@ -24,7 +25,8 @@ export async function GET(request: Request) {
 
         await repos.users.touchLastUsed(user.id);
 
-        return NextResponse.json(botConfigFromDb(settings, enabledAccounts));
+        const botConfig = botConfigFromDb(sanitizeBotSettings(settings), enabledAccounts);
+        return NextResponse.json(botConfig);
     } catch (e) {
         console.error('Bot config error:', e);
         return NextResponse.json({ error: 'Failed to load config' }, { status: 500 });

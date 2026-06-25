@@ -1,13 +1,13 @@
 ---
 name: genai-comments
-description: Tune Gemini comment generation in genai.ts and per-account aiPromptHint. Use when editing src/genai.ts, comment quality issues, or /tune-prompts.
+description: Tune AI comment generation in core/src/ai/genai.ts and per-account aiPromptHint. Use when editing genai.ts, comment quality issues, or /tune-prompts.
 ---
 
 # GenAI Comments
 
 ## Model & config
 
-- Model: `gemini-2.5-flash-lite-preview-06-17` in `src/genai.ts`
+- Model config in `core/src/ai/genai.ts` (Gemini/Groq/local via admin settings)
 - `temperature: 0.9`, `maxOutputTokens: 80`
 - Multimodal: sends image or video inline when URL captured from post
 
@@ -24,7 +24,7 @@ description: Tune Gemini comment generation in genai.ts and per-account aiPrompt
 
 1. Identify failure mode (too generic, wrong tone, too long, off-topic)
 2. Adjust `buildPrompt()` rules in `genai.ts` OR add `aiPromptHint` for one account
-3. Run `npx ts-node src/main.ts test-comment <username>`
+3. Test via Electron app (`npm run dev:electron`)
 4. Compare output in `interaction_log.csv`
 
 ## Generation config tweaks

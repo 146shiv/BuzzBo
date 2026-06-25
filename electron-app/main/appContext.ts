@@ -2,7 +2,8 @@ import { EventEmitter } from 'events';
 import type { SettingsConfig } from '@buzzbo/core/config';
 import { DEFAULT_SETTINGS } from '@buzzbo/core/config';
 import { AdminApiClient, resolveAdminApiBaseUrl } from '@buzzbo/core/api/apiClient';
-import { AICommentGenerator } from '@buzzbo/core/ai/genai';
+import type { AICommentGeneratorAdapter } from '@buzzbo/core/ai/genai';
+import { RemoteAICommentGenerator } from '@buzzbo/core/ai/remoteAiCommentGenerator';
 import { RemoteCommentHistoryStore } from '@buzzbo/core/comments';
 import { Platform } from '@buzzbo/core/config';
 import { loadConfigFromApi } from './configLoader';
@@ -18,7 +19,10 @@ export class AppContext extends EventEmitter {
     settings: SettingsConfig = DEFAULT_SETTINGS;
     rawAccounts: Record<string, unknown>[] = [];
     commentHistory = new RemoteCommentHistoryStore(new AdminApiClient({ baseUrl: 'http://localhost' }));
-    aiGenerator = new AICommentGenerator({ provider: 'gemini', mockComments: true });
+    aiGenerator: AICommentGeneratorAdapter = new RemoteAICommentGenerator(
+        new AdminApiClient({ baseUrl: 'http://localhost' }),
+        { aiProvider: 'gemini' }
+    );
     botRunner: BotRunner;
 
     constructor() {
@@ -53,6 +57,9 @@ export class AppContext extends EventEmitter {
         if (!this.client) {
             this.client = new AdminApiClient({ baseUrl: this.getApiBaseUrl() });
             this.commentHistory = new RemoteCommentHistoryStore(this.client);
+            this.aiGenerator = new RemoteAICommentGenerator(this.client, {
+                aiProvider: this.settings.aiProvider ?? 'gemini',
+            });
             this.botRunner = new BotRunner(
                 this.commentHistory,
                 this.aiGenerator,
@@ -110,16 +117,8 @@ export class AppContext extends EventEmitter {
         const loaded = await loadConfigFromApi(client);
         this.settings = loaded.settings;
         this.rawAccounts = loaded.rawAccounts;
-        this.aiGenerator = new AICommentGenerator({
-            provider: loaded.settings.aiProvider ?? 'gemini',
-            googleAiApiKey: loaded.settings.googleAiApiKey,
-            groqApiKey: loaded.settings.groqApiKey,
-            groqModel: loaded.settings.groqModel,
-            groqVisionModel: loaded.settings.groqVisionModel,
-            localLlmBaseUrl: loaded.settings.localLlmBaseUrl,
-            localLlmModel: loaded.settings.localLlmModel,
-            mockComments: loaded.settings.mockAiComments ?? false,
-            maxRequestsPerMinute: loaded.settings.aiMaxRequestsPerMinute,
+        this.aiGenerator = new RemoteAICommentGenerator(client, {
+            aiProvider: loaded.settings.aiProvider ?? 'gemini',
         });
         this.botRunner = new BotRunner(
             this.commentHistory,

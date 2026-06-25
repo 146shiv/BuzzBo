@@ -25,6 +25,19 @@ export interface CommentLogEntry {
     commentText: string | null;
     commentedAt: string;
 }
+export interface GenerateCommentRequest {
+    postText: string;
+    targetUsername: string;
+    promptHint?: string;
+    imageUrl?: string;
+    videoUrl?: string;
+    channelSkillsContext?: string;
+    mentionHandle?: string;
+    imageData?: {
+        data: string;
+        mimeType: string;
+    };
+}
 export declare function resolveAdminApiBaseUrl(): string | null;
 export declare class AdminApiClient {
     private readonly options;
@@ -56,6 +69,9 @@ export declare class AdminApiClient {
     }): Promise<{
         entries: CommentLogEntry[];
         total: number;
+    }>;
+    generateComment(body: GenerateCommentRequest): Promise<{
+        comment: string;
     }>;
 }
 export declare function createApiClientFromEnv(): AdminApiClient | null;

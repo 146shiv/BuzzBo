@@ -1,31 +1,29 @@
 # Buzzbo — Agent Workflow
 
-Agent guide for developing, debugging, and improving this Playwright + Gemini bot.
+Agent guide for developing, debugging, and improving this Playwright + AI comment bot.
 
 ## Stack
 
-- TypeScript, ts-node, Playwright, `@google/genai`, chalk
-- Entry: `src/main.ts`
-- Modes: `monitor` (default), `test-comment`, `check-accounts`
+- Monorepo: `core/`, `instagram-bot/`, `electron-app/`, `admin/`
+- Electron desktop client + Next.js admin API
+- Playwright bot in `@buzzbo/instagram-bot`; AI via admin API (`POST /api/bot/ai/generate-comment`)
 
 ## Module map
 
-| File | Role |
-|------|------|
-| `src/main.ts` | Orchestration, monitoring loop, CLI modes |
-| `src/bot.ts` | Instagram login, post detection, commenting |
-| `src/genai.ts` | Gemini comment generation (text/image/video) |
-| `src/humanBehavior.ts` | Mouse, typing, scroll emulation |
-| `src/fingerprint.ts` | Per-account browser fingerprint |
-| `src/config.ts` | Accounts, API key, delays, behavior |
-| `src/logger.ts` | Chalk console logging |
+| Package / path | Role |
+|----------------|------|
+| `electron-app/` | Desktop UI, bot runner, session/cookies |
+| `instagram-bot/` | Instagram login, post detection, commenting |
+| `core/src/ai/genai.ts` | AI comment generation (server-side) |
+| `core/src/ai/remoteAiCommentGenerator.ts` | Electron → admin AI proxy client |
+| `admin/app/api/bot/` | Bot config, comments, AI endpoints |
+| `core/src/config/` | Shared settings types |
 
-## Data paths
+## Data paths (Electron)
 
-- `data/cookies/{username}.json` — session cookies
-- `data/logs/interaction_log.csv` — comment history
-- `data/logs/profile_stats.csv` — post/follower counts per target
-- `data/logs/*_error_*.png` — error screenshots
+- `~/Library/Application Support/Buzzbo/cookies/` — session cookies (prod)
+- `~/Library/Application Support/Buzzbo/logs/` — error screenshots (prod)
+- Admin API — comment history (no local CSV in prod; CSV only when `developerMode: true`)
 
 ## Commands
 
@@ -34,21 +32,17 @@ Agent guide for developing, debugging, and improving this Playwright + Gemini bo
 | `/improve-workflow` | Bot improve **or** `.cursor` maintain (mode from scope) |
 | `/full-workflow` | Assess → plan → implement → test → verify |
 | `/debug-bot` | Logs/screenshots → root cause → fix → test-comment |
-| `/test-comment` | Scoped single-comment test run |
-| `/add-account` | Config entry + cookie setup via check-accounts |
-| `/tune-prompts` | Tune `genai.ts` / per-account `aiPromptHint` |
-
-## `/improve-workflow` inputs
-
-- **Bot improve:** `Scope: src/bot.ts` or feature area + goal (bug, detection, AI quality)
-- **Workflow maintain:** `Scope: .cursor` — sync commands, skills, rules, agents, hooks
+| `/test-comment` | Test comment via Electron app |
+| `/add-account` | Admin panel account + cookie setup |
+| `/tune-prompts` | Tune `core/src/ai/genai.ts` / per-account `aiPromptHint` |
 
 ## npm scripts
 
 ```bash
-npm start          # monitor mode
-npm test           # test-comment (first enabled account)
-npm run checker    # check-accounts (non-headless login)
+npm run dev              # admin API (localhost:3000)
+npm run dev:electron     # Electron app (dev admin URL)
+npm run dev:electron:prod  # Electron app (prod admin URL)
+npm run dist:mac:prod    # Production macOS build
 ```
 
 ## Subagent hints
@@ -59,17 +53,10 @@ npm run checker    # check-accounts (non-headless login)
 | `playwright-explorer` | Broken selectors, Instagram UI changes |
 | `ai-prompt-tuner` | Comment quality, tone, `aiPromptHint` tuning |
 
-## Reference files
-
-- Improvement briefs: `doc/bot-tasks/*-improvements-brief.md` (template: `_improve-template.md`)
-- Selector deep-dive: `.cursor/skills/playwright-selectors/reference.md`
-- Prompt rules: `.cursor/skills/genai-comments/reference.md`
-
 ## Conventions
 
 1. Read target module before editing; keep diffs minimal
-2. Rules in `.cursor/rules/` apply automatically by glob
-3. Read skills only when a command references them
-4. Use `developerMode: true` in config for fast local iteration
-5. Never commit real API keys or passwords
-6. Do not commit unless the user asks
+2. AI keys live in admin configuration (Supabase), never in Electron client
+3. Use `developerMode: true` in admin settings for fast local iteration
+4. Never commit real API keys or passwords
+5. Do not commit unless the user asks

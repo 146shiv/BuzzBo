@@ -7,41 +7,31 @@ description: Debug Instagram bot failures using logs and screenshots. Use when e
 
 ## Quick triage
 
-1. Read latest `data/logs/*_error_*.png` screenshots
-2. Read `data/logs/interaction_log.csv` for recent attempts
-3. Check terminal output / chalk logger messages for account prefix
-4. Confirm account `enabled: true` and has `targets` in `config.ts`
+1. Read latest error screenshots in Electron userData logs dir
+2. Check Bot Logs panel in Electron for AI/backend errors
+3. Confirm account enabled and configured in admin panel
+4. Verify AI keys set in admin configuration (not exposed to client)
 
 ## By symptom
 
 | Symptom | Likely cause | Action |
 |---------|--------------|--------|
-| Login loop | Expired cookies, CAPTCHA, 2FA | `npm run checker`, `headless: false` |
+| Login loop | Expired cookies, CAPTCHA, 2FA | Re-login via Electron account login flow |
 | Selector timeout | Instagram UI change | Delegate `playwright-explorer`; read `playwright-selectors/reference.md` |
-| Empty AI comment | API key, Gemini error | Check `googleAiApiKey`; read `[AI_ERROR]` logs |
-| SKIPPED | Private profile, no posts, already commented | Expected; verify `profile_stats.csv` |
-| Video play error | "trouble playing this video" | Set `browserChannel: 'chrome'` in config (Chromium lacks H.264) |
+| AI generation failed | Invalid key, Groq/Gemini error | Check admin AI settings; Bot Logs shows backend error |
+| SKIPPED | Private profile, no posts, already commented | Expected |
+| Video play error | "trouble playing this video" | Set `browserChannel: 'chrome'` in admin settings |
+| CSV ENOTDIR | Legacy path in asar | Fixed: CSV only when `developerMode: true` |
 
 ## Debug settings
 
-```typescript
-// config.ts — local debug
-settings: {
-  headless: false,
-  developerMode: true,
-  // ...
-}
-```
+In admin global settings:
 
-## Playwright Inspector
-
-- Press `i` in terminal during run → pauses at next `checkForPause()`
-- Or add `await page.pause()` temporarily (remove before commit)
+- `headless: false` — see browser
+- `developerMode: true` — short delays + local CSV log
 
 ## Verify fix
 
-```bash
-npx ts-node src/main.ts test-comment <username>
-```
+Run Electron app (`npm run dev:electron`) and test comment on one post.
 
 Report: root cause, evidence, fix applied, test result.

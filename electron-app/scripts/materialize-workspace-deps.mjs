@@ -10,14 +10,14 @@ const appRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = join(appRoot, '..');
 const buzzboDir = join(appRoot, 'node_modules', '@buzzbo');
 
-function materialize(name) {
-    const srcRoot = join(repoRoot, name);
-    const destRoot = join(buzzboDir, name.replace('@buzzbo/', ''));
+function materialize(relPath, bundleDir = 'dist') {
+    const srcRoot = join(repoRoot, relPath);
+    const destRoot = join(buzzboDir, relPath.split('/').pop());
     rmSync(destRoot, { recursive: true, force: true });
     mkdirSync(destRoot, { recursive: true });
 
     const pkg = JSON.parse(readFileSync(join(srcRoot, 'package.json'), 'utf-8'));
-    cpSync(join(srcRoot, 'dist'), join(destRoot, 'dist'), { recursive: true });
+    cpSync(join(srcRoot, bundleDir), join(destRoot, bundleDir), { recursive: true });
     writeFileSync(
         join(destRoot, 'package.json'),
         JSON.stringify(
@@ -40,3 +40,4 @@ function materialize(name) {
 mkdirSync(buzzboDir, { recursive: true });
 materialize('core');
 materialize('instagram-bot');
+materialize('packages/ui', 'src');

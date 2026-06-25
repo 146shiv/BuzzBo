@@ -14,7 +14,7 @@ Debug the bot for:
 2. Delegate to `bot-debugger` agent for root-cause analysis
 3. If selectors/DOM: also delegate `playwright-explorer`
 4. Apply minimal fix
-5. Verify: `npx ts-node src/main.ts test-comment <username>`
+5. Verify via Electron app (`npm run dev:electron`)
 
 ### Deliver
 - Root cause and evidence (logs, screenshot paths)

@@ -11,7 +11,7 @@ import {
 import { HumanBehavior, PauseState } from './humanBehavior';
 import { Logger } from '@buzzbo/core/logger/logger';
 import {
-    AICommentGenerator,
+    AICommentGeneratorAdapter,
     getGenericStudyFallbackComment,
     hasActionablePostContext,
     isUnusableAiComment,
@@ -28,6 +28,12 @@ import {
 export type InteractionResult = 'SUCCESS' | 'SKIPPED' | 'FAILED';
 export type { HashtagPostCandidate } from './hashtagRanking';
 
+export interface BotRuntimePaths {
+    cookiePath?: string;
+    logsDir?: string;
+    enableCsvLog?: boolean;
+}
+
 export class InstagramBot {
     private context!: BrowserContext;
     private page!: Page;
@@ -40,30 +46,35 @@ export class InstagramBot {
     private humanBehavior!: HumanBehavior;
     private readonly developerMode: boolean;
     private readonly logger: Logger;
-    private readonly aiGenerator: AICommentGenerator;
+    private readonly aiGenerator: AICommentGeneratorAdapter;
     private readonly commentHistory: CommentHistoryAdapter;
     private readonly channelSkillsContext?: string;
     private readonly browserViewport: { width: number; height: number };
     private capturedVideoUrl: string | undefined = undefined;
     private isCapturingVideo: boolean = false;
     private readonly logsDir: string;
+    private readonly enableCsvLog: boolean;
 
     constructor(
         accountConfig: AccountConfig,
         globalSettings: SettingsConfig,
         pauseState: PauseState,
         logger: Logger,
-        aiGenerator: AICommentGenerator,
+        aiGenerator: AICommentGeneratorAdapter,
         commentHistory: CommentHistoryAdapter,
-        channelSkillsContext?: string
+        channelSkillsContext?: string,
+        runtimePaths?: BotRuntimePaths
     ) {
         this.config = accountConfig;
         this.channelSkillsContext = channelSkillsContext?.trim() || undefined;
         this.browserViewport = globalSettings.browserViewport ?? { width: 1920, height: 1080 };
         this.behavior = globalSettings.behavior;
-        this.cookiePath = path.join(__dirname, '..', 'data', 'cookies', `${this.config.username}.json`);
-        this.globalLogPath = path.join(__dirname, '..', 'data', 'logs', 'interaction_log.csv');
-        this.logsDir = path.join(__dirname, '..', 'data', 'logs');
+        this.cookiePath =
+            runtimePaths?.cookiePath ??
+            path.join(__dirname, '..', 'data', 'cookies', `${this.config.username}.json`);
+        this.logsDir = runtimePaths?.logsDir ?? path.join(__dirname, '..', 'data', 'logs');
+        this.globalLogPath = path.join(this.logsDir, 'interaction_log.csv');
+        this.enableCsvLog = runtimePaths?.enableCsvLog ?? false;
         this.pauseState = pauseState;
         this.developerMode = globalSettings.developerMode;
         this.logger = logger;
@@ -81,6 +92,12 @@ export class InstagramBot {
             };
             this.logger.info(`Action delay loaded: ${actionDelay.min}s - ${actionDelay.max}s`);
         }
+
+        try {
+            fs.mkdirSync(this.logsDir, { recursive: true });
+        } catch {
+            /* ignore */
+        }
     }
 
     private async logInteraction(targetUsername: string, actionType: 'comment', comment: string) {
@@ -92,7 +109,12 @@ export class InstagramBot {
             this.logger.incrementComments();
         }
 
+        if (!this.enableCsvLog) {
+            return;
+        }
+
         try {
+            fs.mkdirSync(this.logsDir, { recursive: true });
             fs.appendFileSync(this.globalLogPath, logEntry, 'utf-8');
         } catch (error: any) {
             this.logger.error(`Failed to write to global CSV log: ${error.message}`);

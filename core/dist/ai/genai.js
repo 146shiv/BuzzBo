@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AICommentGenerator = void 0;
+exports.fetchImageAsBase64ForComment = fetchImageAsBase64ForComment;
 exports.isSubstantiveCaption = isSubstantiveCaption;
 exports.isMetaRefusalComment = isMetaRefusalComment;
 exports.isLowQualityAiComment = isLowQualityAiComment;
@@ -43,6 +44,26 @@ class AiRateLimiter {
             console.log(`[AI_RATE_LIMIT] AI limit (${this.maxRequests}/min) reached — waiting ${Math.ceil(waitMs / 1000)}s`);
             await new Promise(resolve => setTimeout(resolve, waitMs));
         }
+    }
+}
+async function fetchImageAsBase64ForComment(imageUrl) {
+    try {
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+            console.error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+            return null;
+        }
+        const imageArrayBuffer = await response.arrayBuffer();
+        const base64ImageData = Buffer.from(imageArrayBuffer).toString('base64');
+        const contentType = response.headers.get('content-type') || 'image/jpeg';
+        return {
+            data: base64ImageData,
+            mimeType: contentType,
+        };
+    }
+    catch (error) {
+        console.error('Error fetching image:', error);
+        return null;
     }
 }
 class AICommentGenerator {
@@ -133,26 +154,6 @@ class AICommentGenerator {
         const comment = this.mockCommentPool[this.mockCommentIndex % this.mockCommentPool.length];
         this.mockCommentIndex++;
         return comment;
-    }
-    async fetchImageAsBase64(imageUrl) {
-        try {
-            const response = await fetch(imageUrl);
-            if (!response.ok) {
-                console.error(`Failed to fetch image: ${response.status} ${response.statusText}`);
-                return null;
-            }
-            const imageArrayBuffer = await response.arrayBuffer();
-            const base64ImageData = Buffer.from(imageArrayBuffer).toString('base64');
-            const contentType = response.headers.get('content-type') || 'image/jpeg';
-            return {
-                data: base64ImageData,
-                mimeType: contentType,
-            };
-        }
-        catch (error) {
-            console.error('Error fetching image:', error);
-            return null;
-        }
     }
     async fetchVideoAsBase64(videoUrl) {
         try {
@@ -263,23 +264,23 @@ class AICommentGenerator {
     supportsVideoAnalysis() {
         return this.provider === 'gemini';
     }
-    async generateInstagramComment(postText, targetUsername, promptHint, imageUrl, videoUrl, channelSkillsContext, mentionHandle) {
+    async generateInstagramComment(postText, targetUsername, promptHint, imageUrl, videoUrl, channelSkillsContext, mentionHandle, overrides) {
         if (this.mockComments) {
             const comment = this.generateMockComment(postText, targetUsername);
             console.log(`[AI_MOCK] Using mock comment for @${targetUsername}: "${comment}"`);
             return comment;
         }
-        let imageData = null;
+        let imageData = overrides?.imageData ?? null;
         let videoData = null;
-        let hasMedia = false;
+        let hasMedia = Boolean(imageData);
         if (videoUrl && this.provider === 'gemini') {
             console.log(`[AI_INFO] Sending video to ${this.provider} for analysis: ${videoUrl.substring(0, 80)}...`);
             videoData = await this.fetchVideoAsBase64(videoUrl);
             hasMedia = Boolean(videoData);
         }
-        else if (imageUrl) {
+        else if (!imageData && imageUrl) {
             console.log(`[AI_INFO] Sending image to ${this.provider} for analysis: ${imageUrl}`);
-            imageData = await this.fetchImageAsBase64(imageUrl);
+            imageData = await fetchImageAsBase64ForComment(imageUrl);
             hasMedia = Boolean(imageData);
         }
         else if (videoUrl && this.provider !== 'gemini') {
@@ -300,6 +301,9 @@ class AICommentGenerator {
         }
         catch (error) {
             console.error(`[AI_ERROR] ${this.provider} request failed:`, error);
+            if (overrides?.preserveErrorMessage && error instanceof Error) {
+                throw error;
+            }
             throw new Error(`Failed to generate comment for @${targetUsername} using ${this.provider}.`);
         }
     }

@@ -5,6 +5,7 @@ export declare function Field({ label, children, hint, required, }: {
     required?: boolean;
 }): import("react").JSX.Element;
 export declare function Input(props: React.InputHTMLAttributes<HTMLInputElement>): import("react").JSX.Element;
+export declare function SecretInput(props: Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'>): import("react").JSX.Element;
 export declare function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>): import("react").JSX.Element;
 export declare function LabeledSelect({ options, value, onValueChange, }: {
     options: {

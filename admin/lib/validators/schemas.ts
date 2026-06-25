@@ -43,3 +43,19 @@ export const recordCommentSchema = z.object({
     postUrl: z.string().optional(),
     commentText: z.string().optional(),
 });
+
+export const generateCommentSchema = z.object({
+    postText: z.string(),
+    targetUsername: z.string().min(1),
+    promptHint: z.string().optional(),
+    imageUrl: z.string().optional(),
+    videoUrl: z.string().optional(),
+    channelSkillsContext: z.string().optional(),
+    mentionHandle: z.string().optional(),
+    imageData: z
+        .object({
+            data: z.string().min(1),
+            mimeType: z.string().min(1),
+        })
+        .optional(),
+});

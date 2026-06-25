@@ -4,17 +4,17 @@ import { chromium, type Browser } from 'playwright';
 import type { AccountConfig, SettingsConfig } from '@buzzbo/core/config';
 import { InstagramBot } from '@buzzbo/instagram-bot';
 import { generateFingerprint } from '@buzzbo/instagram-bot';
-import { AICommentGenerator } from '@buzzbo/core/ai/genai';
+import type { AICommentGeneratorAdapter } from '@buzzbo/core/ai/genai';
 import type { CommentHistoryAdapter } from '@buzzbo/core/comments';
 import type { UiLogger } from './uiLogger';
-import { getCookiesDir, getFingerprintsDir } from './paths';
+import { getCookiesDir, getFingerprintsDir, getLogsDir } from './paths';
 
 const pauseState = { shouldPause: false };
 
 export async function initializeBotSession(
     account: AccountConfig,
     settings: SettingsConfig,
-    aiGenerator: AICommentGenerator,
+    aiGenerator: AICommentGeneratorAdapter,
     commentHistory: CommentHistoryAdapter,
     logger: UiLogger,
     skillsContent?: string,
@@ -67,7 +67,12 @@ export async function initializeBotSession(
             logger as unknown as import('@buzzbo/core/logger/logger').Logger,
             aiGenerator,
             commentHistory,
-            skillsContent
+            skillsContent,
+            {
+                cookiePath,
+                logsDir: getLogsDir(),
+                enableCsvLog: settings.developerMode,
+            }
         );
 
         if (useManualLogin) {

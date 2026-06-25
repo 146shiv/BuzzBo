@@ -58,9 +58,28 @@ export interface AICommentGeneratorOptions {
     maxRequestsPerMinute?: number;
 }
 
-interface MediaPayload {
+export interface MediaPayload {
     data: string;
     mimeType: string;
+}
+
+export interface GenerateCommentOverrides {
+    imageData?: MediaPayload | null;
+    preserveErrorMessage?: boolean;
+}
+
+export interface AICommentGeneratorAdapter {
+    supportsVideoAnalysis(): boolean;
+    generateInstagramComment(
+        postText: string,
+        targetUsername: string,
+        promptHint?: string,
+        imageUrl?: string,
+        videoUrl?: string,
+        channelSkillsContext?: string,
+        mentionHandle?: string,
+        overrides?: GenerateCommentOverrides
+    ): Promise<string>;
 }
 
 interface OpenAiChatMessage {
@@ -72,7 +91,29 @@ type OpenAiContentPart =
     | { type: 'text'; text: string }
     | { type: 'image_url'; image_url: { url: string } };
 
-export class AICommentGenerator {
+export async function fetchImageAsBase64ForComment(imageUrl: string): Promise<MediaPayload | null> {
+    try {
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+            console.error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+            return null;
+        }
+
+        const imageArrayBuffer = await response.arrayBuffer();
+        const base64ImageData = Buffer.from(imageArrayBuffer).toString('base64');
+        const contentType = response.headers.get('content-type') || 'image/jpeg';
+
+        return {
+            data: base64ImageData,
+            mimeType: contentType,
+        };
+    } catch (error) {
+        console.error('Error fetching image:', error);
+        return null;
+    }
+}
+
+export class AICommentGenerator implements AICommentGeneratorAdapter {
     private readonly provider: AiProvider;
     private readonly googleAiApiKey: string;
     private readonly groqApiKey: string;
@@ -207,28 +248,6 @@ export class AICommentGenerator {
         const comment = this.mockCommentPool[this.mockCommentIndex % this.mockCommentPool.length];
         this.mockCommentIndex++;
         return comment;
-    }
-
-    private async fetchImageAsBase64(imageUrl: string): Promise<MediaPayload | null> {
-        try {
-            const response = await fetch(imageUrl);
-            if (!response.ok) {
-                console.error(`Failed to fetch image: ${response.status} ${response.statusText}`);
-                return null;
-            }
-
-            const imageArrayBuffer = await response.arrayBuffer();
-            const base64ImageData = Buffer.from(imageArrayBuffer).toString('base64');
-            const contentType = response.headers.get('content-type') || 'image/jpeg';
-
-            return {
-                data: base64ImageData,
-                mimeType: contentType,
-            };
-        } catch (error) {
-            console.error('Error fetching image:', error);
-            return null;
-        }
     }
 
     private async fetchVideoAsBase64(videoUrl: string): Promise<MediaPayload | null> {
@@ -380,7 +399,8 @@ export class AICommentGenerator {
         imageUrl?: string,
         videoUrl?: string,
         channelSkillsContext?: string,
-        mentionHandle?: string
+        mentionHandle?: string,
+        overrides?: GenerateCommentOverrides
     ): Promise<string> {
         if (this.mockComments) {
             const comment = this.generateMockComment(postText, targetUsername);
@@ -388,9 +408,9 @@ export class AICommentGenerator {
             return comment;
         }
 
-        let imageData: MediaPayload | null = null;
+        let imageData: MediaPayload | null = overrides?.imageData ?? null;
         let videoData: MediaPayload | null = null;
-        let hasMedia = false;
+        let hasMedia = Boolean(imageData);
 
         if (videoUrl && this.provider === 'gemini') {
             console.log(
@@ -398,9 +418,9 @@ export class AICommentGenerator {
             );
             videoData = await this.fetchVideoAsBase64(videoUrl);
             hasMedia = Boolean(videoData);
-        } else if (imageUrl) {
+        } else if (!imageData && imageUrl) {
             console.log(`[AI_INFO] Sending image to ${this.provider} for analysis: ${imageUrl}`);
-            imageData = await this.fetchImageAsBase64(imageUrl);
+            imageData = await fetchImageAsBase64ForComment(imageUrl);
             hasMedia = Boolean(imageData);
         } else if (videoUrl && this.provider !== 'gemini') {
             console.log(
@@ -444,6 +464,9 @@ export class AICommentGenerator {
             }
         } catch (error) {
             console.error(`[AI_ERROR] ${this.provider} request failed:`, error);
+            if (overrides?.preserveErrorMessage && error instanceof Error) {
+                throw error;
+            }
             throw new Error(`Failed to generate comment for @${targetUsername} using ${this.provider}.`);
         }
     }

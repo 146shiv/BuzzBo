@@ -1,3 +1,7 @@
+'use client';
+
+import { useState } from 'react';
+
 const inputClass =
     'flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm text-foreground shadow-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30';
 const textareaClass =
@@ -30,6 +34,29 @@ export function Field({
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
     return <input className={inputClass} {...props} />;
+}
+
+export function SecretInput(props: Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'>) {
+    const [visible, setVisible] = useState(false);
+
+    return (
+        <div className="relative">
+            <Input
+                {...props}
+                type={visible ? 'text' : 'password'}
+                className={`${props.className ?? ''} pr-16`.trim()}
+                autoComplete="off"
+            />
+            <button
+                type="button"
+                aria-label={visible ? 'Hide key' : 'View key'}
+                className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setVisible(v => !v)}
+            >
+                {visible ? 'Hide' : 'View'}
+            </button>
+        </div>
+    );
 }
 
 export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {

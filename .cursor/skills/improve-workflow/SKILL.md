@@ -32,7 +32,7 @@ Scope is `src/`, a file path, or a feature goal (not `.cursor`).
 ### Phase 4 — Test
 
 ```bash
-npx ts-node src/main.ts test-comment <username>
+Test via Electron app (`npm run dev:electron`).
 ```
 
 Use `developerMode: true` for faster iteration. Use `npm run checker` for login/CAPTCHA issues.

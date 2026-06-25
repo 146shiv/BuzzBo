@@ -12,6 +12,7 @@ import { AdminShell } from '@/components/admin/AdminShell';
 import { SettingsSidebar, GLOBAL_GROUPS, getAccountGroups } from '@/components/admin/SettingsSidebar';
 import { GlobalSettingsPanel, AccountSettingsPanel } from '@/components/admin/SettingsPanels';
 import { validateAccountSettings } from '@buzzbo/core/ui/account-settings';
+import { validateGlobalSettings } from '@buzzbo/core/config';
 import { ManageAccountsSheet } from '@/components/admin/ManageAccountsSheet';
 import { ChangePasswordDialog } from '@/components/admin/ChangePasswordDialog';
 import { apiFetch } from '@/lib/api';
@@ -90,6 +91,13 @@ export function AppSettingsPage({ userId }: { userId: string }) {
     async function handleSave() {
         if (selectedAccountId !== 'global' && accountDraft) {
             const validationError = validateAccountSettings(accountDraft);
+            if (validationError) {
+                toast.error(validationError);
+                return;
+            }
+        }
+        if (selectedAccountId === 'global') {
+            const validationError = validateGlobalSettings(settings);
             if (validationError) {
                 toast.error(validationError);
                 return;

@@ -17,6 +17,10 @@
       "types": "./dist/ai/genai.d.ts",
       "default": "./dist/ai/genai.js"
     },
+    "./ai/remoteAiCommentGenerator": {
+      "types": "./dist/ai/remoteAiCommentGenerator.d.ts",
+      "default": "./dist/ai/remoteAiCommentGenerator.js"
+    },
     "./api/apiClient": {
       "types": "./dist/api/apiClient.d.ts",
       "default": "./dist/api/apiClient.js"

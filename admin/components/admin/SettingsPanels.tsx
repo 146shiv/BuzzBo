@@ -1,6 +1,7 @@
 'use client';
 
 import { Input } from '@/components/ui/input';
+import { SecretInput } from '@/components/ui/secret-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { LabeledSelect } from '@/components/ui/select';
@@ -19,14 +20,19 @@ function Field({
     label,
     children,
     hint,
+    required,
 }: {
     label: string;
     children: React.ReactNode;
     hint?: string;
+    required?: boolean;
 }) {
     return (
         <div className="space-y-2">
-            <Label>{label}</Label>
+            <Label>
+                {label}
+                {required && <span className="ml-1 text-destructive">*</span>}
+            </Label>
             {children}
             {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
         </div>
@@ -158,7 +164,8 @@ export function GlobalSettingsPanel({
                 </div>
             );
 
-        case 'ai':
+        case 'ai': {
+            const provider = settings.aiProvider;
             return (
                 <div className="space-y-4">
                     <Field label="AI Provider">
@@ -168,36 +175,54 @@ export function GlobalSettingsPanel({
                             onValueChange={v => patch({ aiProvider: v as SettingsConfig['aiProvider'] })}
                         />
                     </Field>
-                    <Field label="Google AI API Key">
-                        <Input
-                            type="password"
-                            value={settings.googleAiApiKey}
-                            onChange={e => patch({ googleAiApiKey: e.target.value })}
-                        />
-                    </Field>
-                    <Field label="Groq API Key">
-                        <Input
-                            type="password"
-                            value={settings.groqApiKey}
-                            onChange={e => patch({ groqApiKey: e.target.value })}
-                        />
-                    </Field>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="Groq Model">
-                            <Input value={settings.groqModel} onChange={e => patch({ groqModel: e.target.value })} />
+                    {provider === 'gemini' && (
+                        <Field label="Google AI API Key" required>
+                            <SecretInput
+                                value={settings.googleAiApiKey}
+                                onChange={e => patch({ googleAiApiKey: e.target.value })}
+                            />
                         </Field>
-                        <Field label="Groq Vision Model">
-                            <Input value={settings.groqVisionModel} onChange={e => patch({ groqVisionModel: e.target.value })} />
-                        </Field>
-                    </div>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="Local LLM URL">
-                            <Input value={settings.localLlmBaseUrl} onChange={e => patch({ localLlmBaseUrl: e.target.value })} />
-                        </Field>
-                        <Field label="Local LLM Model">
-                            <Input value={settings.localLlmModel} onChange={e => patch({ localLlmModel: e.target.value })} />
-                        </Field>
-                    </div>
+                    )}
+                    {provider === 'groq' && (
+                        <>
+                            <Field label="Groq API Key" required>
+                                <SecretInput
+                                    value={settings.groqApiKey}
+                                    onChange={e => patch({ groqApiKey: e.target.value })}
+                                />
+                            </Field>
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <Field label="Groq Model">
+                                    <Input
+                                        value={settings.groqModel}
+                                        onChange={e => patch({ groqModel: e.target.value })}
+                                    />
+                                </Field>
+                                <Field label="Groq Vision Model">
+                                    <Input
+                                        value={settings.groqVisionModel}
+                                        onChange={e => patch({ groqVisionModel: e.target.value })}
+                                    />
+                                </Field>
+                            </div>
+                        </>
+                    )}
+                    {provider === 'local' && (
+                        <div className="grid gap-4 sm:grid-cols-2">
+                            <Field label="Local LLM URL" required>
+                                <Input
+                                    value={settings.localLlmBaseUrl}
+                                    onChange={e => patch({ localLlmBaseUrl: e.target.value })}
+                                />
+                            </Field>
+                            <Field label="Local LLM Model" required>
+                                <Input
+                                    value={settings.localLlmModel}
+                                    onChange={e => patch({ localLlmModel: e.target.value })}
+                                />
+                            </Field>
+                        </div>
+                    )}
                     <Field label="Mock AI Comments">
                         <LabeledSelect
                             options={BOOL_ON_OFF}
@@ -213,6 +238,7 @@ export function GlobalSettingsPanel({
                     </Field>
                 </div>
             );
+        }
 
         case 'timing':
             return (

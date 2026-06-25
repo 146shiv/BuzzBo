@@ -57,11 +57,6 @@ class AdminApiClient {
             },
         });
         const data = (await res.json());
-        if (path.includes('/api/bot/accounts/') && init.method !== 'PATCH') {
-            // #region agent log
-            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'e0ccc5' }, body: JSON.stringify({ sessionId: 'e0ccc5', location: 'apiClient.ts:request', message: 'getAccount response', data: { path, status: res.status, ok: res.ok, error: data?.error ?? null, baseUrl: this.baseUrl }, timestamp: Date.now(), hypothesisId: 'A' }) }).catch(() => { });
-            // #endregion
-        }
         if (!res.ok)
             throw new Error(data.error || `Request failed: ${path}`);
         return data;
@@ -120,6 +115,12 @@ class AdminApiClient {
             offset: String(opts.offset ?? 0),
         });
         return this.request(`/api/bot/comments?${params}`);
+    }
+    async generateComment(body) {
+        return this.request('/api/bot/ai/generate-comment', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
     }
 }
 exports.AdminApiClient = AdminApiClient;

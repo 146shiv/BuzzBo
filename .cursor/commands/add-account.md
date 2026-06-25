@@ -30,7 +30,7 @@ Add account:
 3. Confirm `data/cookies/{username}.json` created
 
 ### Phase 3 — Verify
-Run `npx ts-node src/main.ts test-comment <username>`
+Run test comment via Electron app (`npm run dev:electron`) after adding the account in admin.
 
 ### Deliver
 - Config changes summary

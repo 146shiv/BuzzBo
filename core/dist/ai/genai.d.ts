@@ -10,7 +10,20 @@ export interface AICommentGeneratorOptions {
     mockComments?: boolean;
     maxRequestsPerMinute?: number;
 }
-export declare class AICommentGenerator {
+export interface MediaPayload {
+    data: string;
+    mimeType: string;
+}
+export interface GenerateCommentOverrides {
+    imageData?: MediaPayload | null;
+    preserveErrorMessage?: boolean;
+}
+export interface AICommentGeneratorAdapter {
+    supportsVideoAnalysis(): boolean;
+    generateInstagramComment(postText: string, targetUsername: string, promptHint?: string, imageUrl?: string, videoUrl?: string, channelSkillsContext?: string, mentionHandle?: string, overrides?: GenerateCommentOverrides): Promise<string>;
+}
+export declare function fetchImageAsBase64ForComment(imageUrl: string): Promise<MediaPayload | null>;
+export declare class AICommentGenerator implements AICommentGeneratorAdapter {
     private readonly provider;
     private readonly googleAiApiKey;
     private readonly groqApiKey;
@@ -27,14 +40,13 @@ export declare class AICommentGenerator {
     private validateProviderConfig;
     private buildPrompt;
     private generateMockComment;
-    private fetchImageAsBase64;
     private fetchVideoAsBase64;
     private sanitizeComment;
     private buildOpenAiMessages;
     private generateWithGemini;
     private generateWithOpenAiCompatible;
     supportsVideoAnalysis(): boolean;
-    generateInstagramComment(postText: string, targetUsername: string, promptHint?: string, imageUrl?: string, videoUrl?: string, channelSkillsContext?: string, mentionHandle?: string): Promise<string>;
+    generateInstagramComment(postText: string, targetUsername: string, promptHint?: string, imageUrl?: string, videoUrl?: string, channelSkillsContext?: string, mentionHandle?: string, overrides?: GenerateCommentOverrides): Promise<string>;
 }
 export declare function isSubstantiveCaption(caption: string): boolean;
 export declare function isMetaRefusalComment(text: string): boolean;

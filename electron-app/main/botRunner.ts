@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import type { Browser } from 'playwright';
 import type { AccountConfig, SettingsConfig } from '@buzzbo/core/config';
-import { AICommentGenerator } from '@buzzbo/core/ai/genai';
+import type { AICommentGeneratorAdapter } from '@buzzbo/core/ai/genai';
 import type { CommentHistoryAdapter } from '@buzzbo/core/comments';
 import { RemoteCommentHistoryStore, extractPostShortcode } from '@buzzbo/core/comments';
 import {
@@ -44,7 +44,7 @@ export class BotRunner extends EventEmitter {
 
     constructor(
         private readonly commentHistory: CommentHistoryAdapter,
-        private readonly aiGenerator: AICommentGenerator,
+        private readonly aiGenerator: AICommentGeneratorAdapter,
         private readonly onHeartbeat: () => Promise<void>
     ) {
         super();

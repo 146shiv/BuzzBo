@@ -3,32 +3,33 @@ name: bot-test
 description: Run and interpret test-comment mode for a single account. Use when running /test-comment or verifying bot changes.
 ---
 
-# Bot Test (test-comment mode)
+# Bot Test (Electron test-comment)
 
 ## Run
 
 ```bash
-# First enabled account, first target
-npm test
+# Terminal 1 — admin API
+npm run dev
 
-# Specific account
-npx ts-node src/main.ts test-comment <instagram_username>
+# Terminal 2 — Electron app
+npm run dev:electron
 ```
+
+In the Electron app: log in → select account → use **Test comment** on a post URL (or start a url_list run).
 
 ## Prerequisites
 
-- Account `enabled: true` in `config.ts`
-- At least one `targets` entry
-- Valid `googleAiApiKey`
-- Cookies at `data/cookies/{username}.json` (or login will run)
+- Account enabled in admin panel
+- Valid AI keys saved in admin configuration (Groq/Gemini)
+- Cookies saved via in-app login flow
 
 ## What it does
 
 1. Launches browser for one account
 2. Logs in (or uses saved cookies)
-3. Opens first target's latest non-pinned post
-4. Generates AI comment (caption + image/video if present)
-5. Posts comment and logs to `interaction_log.csv`
+3. Opens target post URL
+4. Calls admin API for AI comment generation
+5. Posts comment and records to admin comment history
 
 ## Results
 
@@ -36,14 +37,14 @@ npx ts-node src/main.ts test-comment <instagram_username>
 |--------|---------|
 | `SUCCESS` | Comment posted and verified in dialog |
 | `SKIPPED` | Private profile, no post, or duplicate comment |
-| `FAILED` | Error during flow; check logs and screenshots |
+| `FAILED` | Error during flow; check Bot Logs and screenshots |
 
 ## Fast iteration
 
-Set `developerMode: true` in config for shorter delays.
+Set `developerMode: true` in admin global settings for shorter delays and local CSV logging.
 
 ## After test
 
-- Confirm row in `data/logs/interaction_log.csv`
-- Check `data/logs/` for new error screenshots
-- For login issues, use `npm run checker` instead
+- Check Bot Logs panel in Electron for AI errors (backend returns detailed messages)
+- Error screenshots: `~/Library/Application Support/Buzzbo/logs/` (prod) or app userData in dev
+- Comment history: admin panel / Electron Comment Activity panel

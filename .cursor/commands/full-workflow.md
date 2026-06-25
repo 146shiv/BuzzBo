@@ -21,7 +21,7 @@ Minimal diff. Follow `.cursor/rules/`. Read skills only when relevant (`playwrig
 Apply `/test-comment` logic. Read `.cursor/skills/bot-test/SKILL.md`.
 
 ```bash
-npx ts-node src/main.ts test-comment <username>
+Test via Electron app (`npm run dev:electron`).
 ```
 
 ### Phase 5 — Verify

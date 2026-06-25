@@ -41,16 +41,19 @@ const genai_1 = require("@buzzbo/core/ai/genai");
 const comments_1 = require("@buzzbo/core/comments");
 const hashtagRanking_1 = require("./hashtagRanking");
 class InstagramBot {
-    constructor(accountConfig, globalSettings, pauseState, logger, aiGenerator, commentHistory, channelSkillsContext) {
+    constructor(accountConfig, globalSettings, pauseState, logger, aiGenerator, commentHistory, channelSkillsContext, runtimePaths) {
         this.capturedVideoUrl = undefined;
         this.isCapturingVideo = false;
         this.config = accountConfig;
         this.channelSkillsContext = channelSkillsContext?.trim() || undefined;
         this.browserViewport = globalSettings.browserViewport ?? { width: 1920, height: 1080 };
         this.behavior = globalSettings.behavior;
-        this.cookiePath = path.join(__dirname, '..', 'data', 'cookies', `${this.config.username}.json`);
-        this.globalLogPath = path.join(__dirname, '..', 'data', 'logs', 'interaction_log.csv');
-        this.logsDir = path.join(__dirname, '..', 'data', 'logs');
+        this.cookiePath =
+            runtimePaths?.cookiePath ??
+                path.join(__dirname, '..', 'data', 'cookies', `${this.config.username}.json`);
+        this.logsDir = runtimePaths?.logsDir ?? path.join(__dirname, '..', 'data', 'logs');
+        this.globalLogPath = path.join(this.logsDir, 'interaction_log.csv');
+        this.enableCsvLog = runtimePaths?.enableCsvLog ?? false;
         this.pauseState = pauseState;
         this.developerMode = globalSettings.developerMode;
         this.logger = logger;
@@ -68,6 +71,12 @@ class InstagramBot {
             };
             this.logger.info(`Action delay loaded: ${actionDelay.min}s - ${actionDelay.max}s`);
         }
+        try {
+            fs.mkdirSync(this.logsDir, { recursive: true });
+        }
+        catch {
+            /* ignore */
+        }
     }
     async logInteraction(targetUsername, actionType, comment) {
         const timestamp = new Date().toISOString();
@@ -76,7 +85,11 @@ class InstagramBot {
         if (actionType === 'comment') {
             this.logger.incrementComments();
         }
+        if (!this.enableCsvLog) {
+            return;
+        }
         try {
+            fs.mkdirSync(this.logsDir, { recursive: true });
             fs.appendFileSync(this.globalLogPath, logEntry, 'utf-8');
         }
         catch (error) {

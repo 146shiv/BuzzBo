@@ -75,9 +75,12 @@ function mapUser(row: Record<string, unknown>): DbUser {
 }
 
 function mapConfig(row: Record<string, unknown>): DbConfiguration {
+    const settings = decryptConfigSecrets(
+        (row.settings as Record<string, unknown>) || {}
+    ) as unknown as SettingsConfig;
     return {
         ...(row as unknown as DbConfiguration),
-        settings: row.settings as SettingsConfig,
+        settings,
     };
 }
 
@@ -217,9 +220,12 @@ const configurationsRepo: ConfigurationRepository = {
     },
 
     async create(input: CreateConfigurationInput) {
+        const settings = encryptConfigSecrets(
+            (input.settings || {}) as unknown as Record<string, unknown>
+        ) as unknown as SettingsConfig;
         const { data, error } = await getSupabase()
             .from('configurations')
-            .insert({ name: input.name, settings: input.settings })
+            .insert({ name: input.name, settings })
             .select()
             .single();
         if (error) throw error;
@@ -229,7 +235,11 @@ const configurationsRepo: ConfigurationRepository = {
     async update(id, input: UpdateConfigurationInput) {
         const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
         if (input.name !== undefined) patch.name = input.name;
-        if (input.settings !== undefined) patch.settings = input.settings;
+        if (input.settings !== undefined) {
+            patch.settings = encryptConfigSecrets(
+                input.settings as unknown as Record<string, unknown>
+            );
+        }
         const { data, error } = await getSupabase()
             .from('configurations')
             .update(patch)

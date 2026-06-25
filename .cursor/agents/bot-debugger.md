@@ -10,7 +10,7 @@ When invoked:
 2. Read `.cursor/skills/bot-debug/SKILL.md`
 3. Identify root cause with evidence (log line, screenshot, selector)
 4. Apply minimal fix — no unrelated changes
-5. Verify with `npx ts-node src/main.ts test-comment <username>`
+5. Verify via Electron app test comment (`npm run dev:electron`)
 
 Focus areas: login/cookies, selectors, AI API errors, private profiles, timing.
 

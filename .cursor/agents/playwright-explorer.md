@@ -6,7 +6,7 @@ description: Playwright DOM explorer for broken Instagram selectors and UI chang
 You specialize in Instagram DOM inspection and Playwright locator fixes.
 
 When invoked:
-1. Read `src/bot.ts` and `.cursor/skills/playwright-selectors/SKILL.md`
+1. Read `instagram-bot/src/InstagramBot.ts` and `.cursor/skills/playwright-selectors/SKILL.md`
 2. Load `reference.md` only if selectors are broken
 3. Propose updated locators scoped to `div[role="dialog"]`
 4. Prefer `getByRole`, aria-labels, and chained locators over brittle CSS

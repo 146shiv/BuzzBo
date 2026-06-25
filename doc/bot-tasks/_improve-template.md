@@ -26,7 +26,7 @@
 
 ## Test plan
 
-- [ ] `npx ts-node src/main.ts test-comment <username>`
+- [ ] Test comment via Electron app (`npm run dev:electron`)
 - [ ] Check `data/logs/interaction_log.csv`
 - [ ] Check `data/logs/` for error screenshots
 - [ ] {other manual checks}

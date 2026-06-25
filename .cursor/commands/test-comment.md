@@ -15,7 +15,7 @@ Test comment flow for:
 3. Run:
 
 ```bash
-npx ts-node src/main.ts test-comment <username>
+Use Electron app test comment flow (`npm run dev:electron`).
 ```
 
 4. Report result: SUCCESS / SKIPPED / FAILED
