@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Buzzbo — Instagram AI engagement bot (Electron desktop + Admin)",
   "private": true,
+  "packageManager": "yarn@1.22.22",
   "workspaces": [
     "core",
     "instagram-bot",

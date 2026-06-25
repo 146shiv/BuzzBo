@@ -1,6 +1,8 @@
 # Cursor IDE
 .cursor/debug*.log
 
+package-lock.json
+
 node_modules/
 release/
 electron-app/out/
