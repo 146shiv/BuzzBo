@@ -24,34 +24,32 @@ npm install
 4. Start the admin API:
 
 ```bash
-npm run dev:admin
-```
-
-5. Start the Electron app:
-
-```bash
 npm run dev
 ```
 
+5. Start the Electron app (separate terminal):
+
+```bash
+npm run dev:electron
+```
+
 Sign in with your Buzzbo bot-user credentials. Select a handle, configure settings in the drawer, then Start/Stop the bot.
+
+## Production backend
+
+```bash
+npm run start   # builds admin, then next start on :3000
+```
 
 ## Build & distribute
 
 ```bash
 npm run build          # core + instagram-bot + electron-app
-npm run dist           # electron-builder (output in release/)
+npm run dist           # unpacked dir (local)
+npm run dist:mac       # macOS DMG
+npm run dist:win       # Windows NSIS installer
+npm run dist:linux     # Linux AppImage
 ```
-
-## Phase gates
-
-Automated verification scripts for each migration phase:
-
-```bash
-npm run gate:phase-N   # N = 1..10
-npm run gate:all
-```
-
-Set `TEST_BOT_USER` / `TEST_BOT_PASS` in `.env` for IPC/API gate tests.
 
 ## ⚠️ Disclaimer
 

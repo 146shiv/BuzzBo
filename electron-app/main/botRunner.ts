@@ -16,8 +16,6 @@ import { initializeBotSession } from './botSession';
 import { resolveAccountSettings } from './resolveAccountSettings';
 import { UiLogger } from './uiLogger';
 
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
 export interface BotStatus {
     running: boolean;
     mode?: string;
@@ -42,6 +40,7 @@ export class BotRunner extends EventEmitter {
     private browser: Browser | null = null;
     private status: BotStatus = { running: false };
     private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    private delayAbort: (() => void) | null = null;
 
     constructor(
         private readonly commentHistory: CommentHistoryAdapter,
@@ -56,7 +55,10 @@ export class BotRunner extends EventEmitter {
     }
 
     async stop(): Promise<void> {
+        const wasRunning = this.running;
+        const account = this.status.accountUsername;
         this.stopRequested = true;
+        this.interruptDelay();
         this.clearHeartbeat();
         if (this.browser) {
             try {
@@ -66,9 +68,35 @@ export class BotRunner extends EventEmitter {
             }
             this.browser = null;
         }
+        if (wasRunning) {
+            this.emit('bot:log', {
+                level: 'warn',
+                message: 'Commenting job stopped.',
+                account,
+                at: new Date().toISOString(),
+            });
+        }
         this.running = false;
         this.status = { running: false };
         this.emit('bot:status', this.getStatus());
+    }
+
+    private interruptibleDelay(ms: number): Promise<void> {
+        return new Promise(resolve => {
+            const timer = setTimeout(() => {
+                this.delayAbort = null;
+                resolve();
+            }, ms);
+            this.delayAbort = () => {
+                clearTimeout(timer);
+                this.delayAbort = null;
+                resolve();
+            };
+        });
+    }
+
+    private interruptDelay(): void {
+        this.delayAbort?.();
     }
 
     private clearHeartbeat(): void {
@@ -275,14 +303,14 @@ export class BotRunner extends EventEmitter {
                     if (result === 'SUCCESS' && i < rankedPosts.length - 1 && !this.stopRequested) {
                         const waitMs = bot.getRandomActionDelayMs();
                         logger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next post...`);
-                        await delay(waitMs);
+                        await this.interruptibleDelay(waitMs);
                     }
                 }
 
                 if (postedInHashtag && h < hashtags.length - 1 && !this.stopRequested) {
                     const waitMs = bot.getRandomActionDelayMs();
                     logger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next hashtag...`);
-                    await delay(waitMs);
+                    await this.interruptibleDelay(waitMs);
                 }
             }
         } finally {
@@ -437,7 +465,7 @@ export class BotRunner extends EventEmitter {
                         if (result === 'SUCCESS' && i < rankedPosts.length - 1 && !this.stopRequested) {
                             const waitMs = bot.getRandomActionDelayMs();
                             logger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next post...`);
-                            await delay(waitMs);
+                            await this.interruptibleDelay(waitMs);
                         }
                     }
 
@@ -452,7 +480,7 @@ export class BotRunner extends EventEmitter {
                 if (postedInHashtag && h < hashtags.length - 1 && !this.stopRequested) {
                     const waitMs = bot.getRandomActionDelayMs();
                     logger.info(`Waiting for ~${Math.round(waitMs / 1000)}s before next hashtag...`);
-                    await delay(waitMs);
+                    await this.interruptibleDelay(waitMs);
                 }
             }
         } finally {
@@ -507,7 +535,7 @@ export class BotRunner extends EventEmitter {
                     const delayMs =
                         (runConfig.account.actionDelaySeconds?.min ??
                             runConfig.settings.defaultActionDelaySeconds.min) * 1000;
-                    await new Promise(r => setTimeout(r, delayMs));
+                    await this.interruptibleDelay(delayMs);
                 }
             }
         } finally {

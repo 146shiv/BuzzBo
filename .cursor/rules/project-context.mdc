@@ -7,7 +7,7 @@ alwaysApply: true
 
 - Monorepo: `core/`, `instagram-bot/`, `electron-app/`, `admin/`
 - Playwright bot in `@buzzbo/instagram-bot`; shared types/API in `@buzzbo/core`
-- **Electron-only client** — run via `npm run dev` (no CLI)
+- **Electron-only client** — run via `npm run dev:electron` (no CLI); backend via `npm run dev`
 - Admin API URL: `BUZZBO_ADMIN_API_URL` (fallback `ADMIN_API_URL`)
 - Educational use only — automating Instagram violates ToS; account ban risk
 - Match existing patterns: class-based modules, chalk `Logger`, async/await

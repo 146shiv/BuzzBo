@@ -8,7 +8,10 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "dist": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --dir"
+    "dist": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --dir",
+    "dist:mac": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --mac",
+    "dist:win": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --win",
+    "dist:linux": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --linux"
   },
   "dependencies": {
     "@buzzbo/core": "1.0.0",
@@ -62,6 +65,12 @@
     "mac": {
       "category": "public.app-category.productivity",
       "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }]
+    },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "linux": {
+      "target": [{ "target": "AppImage", "arch": ["x64"] }]
     }
   }
 }
