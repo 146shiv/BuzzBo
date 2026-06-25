@@ -1,20 +1,17 @@
-node_modules/
-**/node_modules/
+# Cursor IDE
+.cursor/debug*.log
 
+node_modules/
+release/
+electron-app/out/
 data/cookies/
 data/logs/
 data/fingerprints/
 data/*.db
 data/*.db-*
-
-# Build outputs — do not commit
-release/
-admin/.next/
-dist/
-out/
-electron-app/out/
-
-# Secrets
 .env
-admin/.env
-*.env.local
+
+# Admin panel
+admin/.env.local
+admin/.next/
+admin/node_modules/

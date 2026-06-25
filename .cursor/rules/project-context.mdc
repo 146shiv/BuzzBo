@@ -1,14 +1,13 @@
 ---
-description: Instagram AI commenter bot context and conventions
+description: Buzzbo — Instagram engagement bot context and conventions
 alwaysApply: true
 ---
 
 # Project Context
 
-- Playwright bot: monitors Instagram targets, generates Gemini comments, posts them
+- Monorepo: `core/`, `instagram-bot/`, `electron-app/`, `admin/`
+- Playwright bot in `@buzzbo/instagram-bot`; shared types/API in `@buzzbo/core`
+- **Electron-only client** — run via `npm run dev:electron` (no CLI); backend via `npm run dev`
+- Admin API URL: `BUZZBO_ADMIN_API_URL` (fallback `ADMIN_API_URL`)
 - Educational use only — automating Instagram violates ToS; account ban risk
-- TypeScript in `src/`; config in `src/config.ts`; runtime data in `data/`
-- npm scripts: `start` (monitor), `test` (test-comment), `checker` (check-accounts)
-- Modes via CLI: `npx ts-node src/main.ts [monitor|test-comment|check-accounts]`
-- Controls: CTRL+C to stop; `i` key requests Playwright Inspector pause
 - Match existing patterns: class-based modules, chalk `Logger`, async/await

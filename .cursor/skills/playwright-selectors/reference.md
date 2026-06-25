@@ -33,6 +33,8 @@ page.locator('div[role="dialog"] article img').first()
 
 - Intercept network for `.mp4` URLs during video load
 - Error text: `Sorry, we're having trouble playing this video`
+- **Root cause:** Playwright bundled Chromium lacks H.264 codecs; Instagram reels won't play
+- **Fix:** `settings.browserChannel: 'chrome'` in config (uses installed Google Chrome)
 - Fallback: comment on caption only if video unavailable
 
 ## Profile stats (main.ts)

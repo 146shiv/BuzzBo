@@ -1,0 +1,131 @@
+{
+  "settings": {
+    "headless": false,
+    "developerMode": false,
+    "browserChannel": "chrome",
+    "browserViewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "aiProvider": "groq",
+    "googleAiApiKey": "YOUR_GOOGLE_AI_API_KEY_HERE",
+    "groqApiKey": "YOUR_GROQ_API_KEY_HERE",
+    "groqModel": "llama-3.3-70b-versatile",
+    "groqVisionModel": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "localLlmBaseUrl": "http://localhost:11434/v1",
+    "localLlmModel": "llama3.2",
+    "mockAiComments": false,
+    "aiMaxRequestsPerMinute": 15,
+    "monitoringIntervalSeconds": {
+      "min": 360,
+      "max": 600
+    },
+    "behavior": {
+      "shortWaitMs": {
+        "base": 1200,
+        "variance": 2000
+      },
+      "navigationWaitMs": {
+        "base": 3500,
+        "variance": 4500
+      },
+      "typingDelayMs": {
+        "base": 140,
+        "variance": 220
+      }
+    },
+    "defaultActionDelaySeconds": {
+      "min": 90,
+      "max": 180
+    },
+    "hashtagSearch": {
+      "ui_search": {
+        "maxPostsToScan": 2,
+        "maxPostsToComment": 3,
+        "minLikes": 0,
+        "minComments": 0,
+        "likeWeight": 1,
+        "commentWeight": 2,
+        "preferTopTab": true
+      },
+      "api_search": {
+        "fetchBatchSize": 100,
+        "maxPostsToComment": 5,
+        "minLikes": 0,
+        "minComments": 0,
+        "likeWeight": 1,
+        "commentWeight": 2
+      }
+    }
+  },
+  "accounts": [
+    {
+      "enabled": true,
+      "username": "studyboapp",
+      "loginMethod": "manual",
+      "password": "YOUR_PASSWORD_HERE",
+      "sourceMode": "hashtag_list",
+      "hashtags": [
+        "studytracking",
+        "studytracker",
+        "studygoals",
+        "studyroutine",
+        "studystreak",
+        "dailystudy",
+        "smartstudy",
+        "focusedstudy",
+        "studyjourney",
+        "studyprogress",
+        "studentproductivity",
+        "studydiscipline",
+        "examready",
+        "examstrategy",
+        "studentgrowth",
+        "learnbetter",
+        "focussession",
+        "deepwork",
+        "goalachievement",
+        "academicsuccess",
+        "selfimprovement",
+        "studentcommunity"
+      ],
+      "instagramApiAccessToken": "EAAfZCptW4g1gBRpvyNF4kPGtZBCj88v4CeWCIi1tvZCtEk2opu56ZAaYLkqS3JJX1oFzmKgKAI1YK6eKaWn8Q6ZCgtFL2cdTNV4XH0RHkHPNXZCzZBRiP4ZC2lOWfg0pnhMCDIwH0u7tICTZCxF6Yy3MCCrk0AgADGGbBtSUiQulkVHUMtuPXeFRerc9QNnZBxnX4k54XWaLVeib7ljLN0hUI0NnLSjOZC6aUIlizLn6rRNMZAdY0IUX6iqCrXJwEZC4nrb5yEuG91aqQJXNtIfkYnVvX1AOY",
+      "instagramApiUserId": "17841473789521517",
+      "hashtagSearch": {
+        "api_search": {
+          "fetchBatchSize": 5,
+          "maxPostsToComment": 5
+        }
+      },
+      "skillsFile": "data/accounts/studybo.app/skills.txt",
+      "mentionUsername": "studyboapp",
+      "mentionPolicy": "append_if_missing",
+      "aiPromptHint": "Sarcastic witty comment anchored to the post topic. Roast the struggle, slip @studyboapp in as the punchline — make scrollers curious enough to check the profile.",
+      "actionDelaySeconds": {
+        "min": 80,
+        "max": 160
+      },
+      "targets": [
+        "instagram",
+        "playwright"
+      ]
+    },
+    {
+      "enabled": true,
+      "username": "_reviewbo",
+      "loginMethod": "manual",
+      "password": "",
+      "sourceMode": "hashtag_list",
+      "hashtags": [],
+      "skillsFile": "data/accounts/_reviewbo/skills.txt",
+      "mentionUsername": "_reviewbo",
+      "mentionPolicy": "append_if_missing",
+      "actionDelaySeconds": {
+        "min": 80,
+        "max": 160
+      },
+      "aiPromptHint": "Analyze the Instagram reel/post (caption, hashtags, visuals, and language). Generate 1 natural, human-like comment that directly reacts to the content. Sound like a food lover, restaurant customer, local business enthusiast, or founder—not a marketer or salesperson. Use humor, food psychology, customer behavior insights, curiosity, or restaurant-owner observations. Match the creator's language (English/Hindi/Hinglish). Keep comments short (8–20 words), conversational, and engaging. Never use generic praise like \"Great post\" or promotional phrases. Only mention @reviewbo when the content is about reviews, ratings, feedback, reputation, or customer experience. Skip and return NO_COMMENT for vulgar, adult, hateful, political, violent, or controversial content.\n",
+      "targets": []
+    }
+  ]
+}

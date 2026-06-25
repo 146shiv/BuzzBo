@@ -1,30 +1,34 @@
 {
-  "name": "instagram-playwright",
+  "name": "buzzbo",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Buzzbo — Instagram AI engagement bot (Electron desktop + Admin)",
+  "private": true,
+  "workspaces": [
+    "core",
+    "instagram-bot",
+    "electron-app",
+    "admin",
+    "packages/ui"
+  ],
+  "author": "Shivendra Yadav",
+  "license": "ISC",
   "scripts": {
-    "start": "ts-node src/main.ts",
-    "test": "ts-node src/main.ts test-comment",
-    "checker": "ts-node src/main.ts check-accounts",
-    "comment-urls": "ts-node src/main.ts comment-urls",
-    "hashtag-comment": "ts-node src/main.ts hashtag-comment",
+    "dev": "npm run dev -w @buzzbo/admin",
+    "dev:electron": "npm run dev -w @buzzbo/electron-app",
+    "start": "npm run build:admin && npm run start -w @buzzbo/admin",
+    "build:core": "npm run build -w @buzzbo/core",
+    "build:instagram-bot": "npm run build -w @buzzbo/instagram-bot",
+    "build:electron": "npm run build -w @buzzbo/electron-app",
+    "build:admin": "npm run build -w @buzzbo/admin",
+    "build": "npm run build:core && npm run build:instagram-bot && npm run build:electron",
+    "dist": "npm run dist -w @buzzbo/electron-app",
+    "dist:mac": "npm run dist:mac -w @buzzbo/electron-app",
+    "dist:win": "npm run dist:win -w @buzzbo/electron-app",
+    "dist:linux": "npm run dist:linux -w @buzzbo/electron-app",
     "postinstall": "playwright install chromium"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "dependencies": {
-    "@google/genai": "^1.6.0",
-    "@types/node": "^24.0.3",
-    "axios": "^1.10.0",
-    "better-sqlite3": "^12.10.0",
-    "chalk": "^5.4.1",
-    "playwright": "^1.53.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.8.3"
-  },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13"
+    "playwright": "^1.53.1",
+    "typescript": "^5.8.3"
   }
 }
