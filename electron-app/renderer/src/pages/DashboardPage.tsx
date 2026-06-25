@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import {
     ChevronDown,
     ChevronUp,
@@ -74,6 +75,7 @@ export default function DashboardPage({
     onLogout: () => void;
 }) {
     const [accounts, setAccounts] = useState<AccountRow[]>([]);
+    const [accountsLoading, setAccountsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState('');
     const [status, setStatus] = useState<BotStatus>({ running: false });
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -83,19 +85,43 @@ export default function DashboardPage({
     const selectedRef = useRef(selectedId);
     selectedRef.current = selectedId;
 
-    useEffect(() => {
-        void window.buzzbo.accounts.list().then(rows => {
+    async function loadAccounts() {
+        setAccountsLoading(true);
+        // #region agent log
+        fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'DashboardPage.tsx:loadAccounts',message:'accounts.list start',data:{username},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
+        try {
+            const rows = await window.buzzbo.accounts.list();
             const mapped = (rows as Record<string, unknown>[]).map(r => ({
                 id: String(r.id),
                 username: String(r.username),
                 enabled: Boolean(r.enabled),
             }));
+            // #region agent log
+            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'DashboardPage.tsx:loadAccounts',message:'accounts.list success',data:{count:mapped.length,accounts:mapped.slice(0,5)},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
+            // #endregion
             setAccounts(mapped);
             const saved = localStorage.getItem('buzzbo-selected-account');
             const pick = mapped.find(a => a.id === saved) ?? mapped[0];
-            if (pick) setSelectedId(pick.id);
-        });
-    }, []);
+            setSelectedId(pick?.id ?? '');
+            if (mapped.length === 0) {
+                toast.warning(
+                    `No handles for @${username}. Add an Instagram handle in Buzzbo Admin → Users → your user → Manage Accounts.`
+                );
+            }
+        } catch (err) {
+            // #region agent log
+            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'DashboardPage.tsx:loadAccounts',message:'accounts.list failed',data:{error:err instanceof Error?err.message:String(err)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
+            toast.error(err instanceof Error ? err.message : 'Failed to load accounts');
+        } finally {
+            setAccountsLoading(false);
+        }
+    }
+
+    useEffect(() => {
+        void loadAccounts();
+    }, [username]);
 
     useEffect(() => {
         if (selectedId) localStorage.setItem('buzzbo-selected-account', selectedId);
@@ -153,13 +179,35 @@ export default function DashboardPage({
                 <Separator orientation="vertical" className="mx-1 h-6" />
 
                 <div className="flex min-w-0 items-center gap-2" data-testid="handle-dropdown">
-                    <LabeledSelect
-                        options={accountOptions}
-                        value={selectedId}
-                        onValueChange={v => v && setSelectedId(v)}
-                        triggerClassName="w-[240px]"
-                        placeholder="Select account"
-                    />
+                    {accountsLoading ? (
+                        <div className="flex h-9 w-[240px] items-center justify-center rounded-md border border-border/60 bg-muted/30 text-xs text-muted-foreground">
+                            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                            Loading handles…
+                        </div>
+                    ) : accounts.length === 0 ? (
+                        <div className="flex max-w-md items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                            <span>No handles — add one in Buzzbo Admin</span>
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => void window.buzzbo.shell.openExternal('http://localhost:3000/dashboard')}
+                            >
+                                Open Admin
+                            </Button>
+                            <Button type="button" variant="ghost" size="sm" onClick={() => void loadAccounts()}>
+                                Refresh
+                            </Button>
+                        </div>
+                    ) : (
+                        <LabeledSelect
+                            options={accountOptions}
+                            value={selectedId}
+                            onValueChange={v => v && setSelectedId(v)}
+                            triggerClassName="w-[240px]"
+                            placeholder="Select account"
+                        />
+                    )}
                     {selected && !selected.enabled && <Badge variant="muted">Disabled</Badge>}
                 </div>
 
@@ -204,7 +252,14 @@ export default function DashboardPage({
                         type="button"
                         variant="secondary"
                         size="icon-sm"
-                        onClick={() => setSettingsOpen(true)}
+                        onClick={() => {
+                            if (!selectedId) {
+                                toast.error('Select a handle first. Add one in Buzzbo Admin if the list is empty.');
+                                return;
+                            }
+                            setSettingsOpen(true);
+                        }}
+                        disabled={!selectedId}
                         data-testid="open-settings"
                         aria-label="Open settings"
                     >

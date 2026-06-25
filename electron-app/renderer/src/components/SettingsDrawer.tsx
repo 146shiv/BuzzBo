@@ -32,10 +32,25 @@ export default function SettingsDrawer({
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        if (!open || !accountId) return;
+        if (!open || !accountId) {
+            // #region agent log
+            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'SettingsDrawer.tsx:useEffect',message:'load skipped',data:{open,accountId:accountId||null},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+            // #endregion
+            return;
+        }
+        // #region agent log
+        fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'SettingsDrawer.tsx:useEffect',message:'accounts.get start',data:{accountId},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
         void window.buzzbo.accounts.get(accountId).then(account => {
+            // #region agent log
+            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'SettingsDrawer.tsx:useEffect',message:'accounts.get success',data:{accountId,hasAccount:account!=null,keys:account?Object.keys(account as object).slice(0,8):[]},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
+            // #endregion
             setDraft(account as Record<string, unknown>);
             setOriginal(JSON.stringify(account));
+        }).catch(err => {
+            // #region agent log
+            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'SettingsDrawer.tsx:useEffect',message:'accounts.get failed',data:{accountId,error:err instanceof Error?err.message:String(err)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
         });
     }, [open, accountId]);
 

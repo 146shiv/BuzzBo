@@ -26,14 +26,42 @@ export const handlers = {
     },
 
     async 'accounts:list'() {
-        appContext.ensureClient();
-        if (appContext.rawAccounts.length === 0) await appContext.refreshConfig();
-        return appContext.rawAccounts;
+        // #region agent log
+        fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:list',message:'ipc list start',data:{cachedCount:appContext.rawAccounts.length,hasToken:!!appContext.client?.getToken()},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
+        try {
+            appContext.ensureClient();
+            if (appContext.rawAccounts.length === 0) await appContext.refreshConfig();
+            const rows = appContext.rawAccounts;
+            // #region agent log
+            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:list',message:'ipc list success',data:{count:rows.length,ids:rows.slice(0,5).map(r=>String(r.id)),usernames:rows.slice(0,5).map(r=>String(r.username))},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
+            // #endregion
+            return rows;
+        } catch (err) {
+            // #region agent log
+            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:list',message:'ipc list error',data:{error:err instanceof Error?err.message:String(err)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
+            throw err;
+        }
     },
 
     async 'accounts:get'(_e: unknown, id: string) {
-        const client = appContext.ensureClient();
-        return client.getAccount(id);
+        // #region agent log
+        fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:get',message:'ipc handler start',data:{id,hasClient:!!appContext.client,hasToken:!!appContext.client?.getToken()},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
+        // #endregion
+        try {
+            const client = appContext.ensureClient();
+            const account = await client.getAccount(id);
+            // #region agent log
+            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:get',message:'ipc handler success',data:{id,hasAccount:account!=null},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+            // #endregion
+            return account;
+        } catch (err) {
+            // #region agent log
+            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:get',message:'ipc handler error',data:{id,error:err instanceof Error?err.message:String(err)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
+            throw err;
+        }
     },
 
     async 'accounts:update'(_e: unknown, payload: { id: string; patch: Record<string, unknown> }) {
