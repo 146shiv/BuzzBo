@@ -4,14 +4,20 @@
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "electron-vite dev --mode development",
+    "dev:prod": "electron-vite dev --mode production",
+    "build": "electron-vite build --mode development",
+    "build:prod": "electron-vite build --mode production",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "dist": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --dir",
-    "dist:mac": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --mac",
-    "dist:win": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --win",
-    "dist:linux": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --linux"
+    "dist": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --dir -c.productName=\"Buzzbo Local\"",
+    "dist:prod": "node scripts/materialize-workspace-deps.mjs && npm run build:prod && electron-builder --dir -c.productName=\"Buzzbo\"",
+    "dist:mac": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --mac -c.productName=\"Buzzbo Local\"",
+    "dist:mac:prod": "node scripts/materialize-workspace-deps.mjs && npm run build:prod && electron-builder --mac -c.productName=\"Buzzbo\"",
+    "dist:win": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --win -c.productName=\"Buzzbo Local\"",
+    "dist:win:prod": "node scripts/materialize-workspace-deps.mjs && npm run build:prod && electron-builder --win -c.productName=\"Buzzbo\"",
+    "dist:linux": "node scripts/materialize-workspace-deps.mjs && npm run build && electron-builder --linux -c.productName=\"Buzzbo Local\"",
+    "dist:linux:prod": "node scripts/materialize-workspace-deps.mjs && npm run build:prod && electron-builder --linux -c.productName=\"Buzzbo\""
   },
   "dependencies": {
     "@buzzbo/core": "1.0.0",

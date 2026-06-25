@@ -4,8 +4,10 @@ import { join } from 'path';
 import { appContext } from './appContext';
 import { handlers } from './ipcHandlers';
 import { runElectronTestMode } from './testHarness';
+import { getProductName } from './buildProfile';
 
 const isTestMode = process.env.ELECTRON_TEST_MODE === '1';
+const productName = getProductName();
 
 function createWindow(): BrowserWindow {
     const win = new BrowserWindow({
@@ -13,7 +15,7 @@ function createWindow(): BrowserWindow {
         height: 800,
         minWidth: 900,
         minHeight: 600,
-        title: 'Buzzbo',
+        title: productName,
         show: !isTestMode,
         webPreferences: {
             preload: join(__dirname, '../preload/index.js'),

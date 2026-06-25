@@ -16,16 +16,22 @@
   "scripts": {
     "dev": "npm run dev -w @buzzbo/admin",
     "dev:electron": "npm run dev -w @buzzbo/electron-app",
+    "dev:electron:prod": "npm run dev:prod -w @buzzbo/electron-app",
     "start": "npm run build:admin && npm run start -w @buzzbo/admin",
     "build:core": "npm run build -w @buzzbo/core",
     "build:instagram-bot": "npm run build -w @buzzbo/instagram-bot",
     "build:electron": "npm run build -w @buzzbo/electron-app",
+    "build:electron:prod": "npm run build:prod -w @buzzbo/electron-app",
     "build:admin": "npm run build -w @buzzbo/admin",
     "build": "npm run build:core && npm run build:instagram-bot && npm run build:electron",
     "dist": "npm run dist -w @buzzbo/electron-app",
+    "dist:prod": "npm run dist:prod -w @buzzbo/electron-app",
     "dist:mac": "npm run dist:mac -w @buzzbo/electron-app",
+    "dist:mac:prod": "npm run dist:mac:prod -w @buzzbo/electron-app",
     "dist:win": "npm run dist:win -w @buzzbo/electron-app",
-    "dist:linux": "npm run dist:linux -w @buzzbo/electron-app"
+    "dist:win:prod": "npm run dist:win:prod -w @buzzbo/electron-app",
+    "dist:linux": "npm run dist:linux -w @buzzbo/electron-app",
+    "dist:linux:prod": "npm run dist:linux:prod -w @buzzbo/electron-app"
   },
   "devDependencies": {
     "react": "^19.2.4",
