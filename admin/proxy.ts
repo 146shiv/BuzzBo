@@ -4,7 +4,7 @@ import { verifyToken, COOKIE_NAME } from '@/lib/auth/jwt';
 
 const adminPaths = ['/dashboard', '/users'];
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
     const { pathname } = request.nextUrl;
 
     if (pathname === '/') {

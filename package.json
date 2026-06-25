@@ -25,11 +25,11 @@
     "dist": "npm run dist -w @buzzbo/electron-app",
     "dist:mac": "npm run dist:mac -w @buzzbo/electron-app",
     "dist:win": "npm run dist:win -w @buzzbo/electron-app",
-    "dist:linux": "npm run dist:linux -w @buzzbo/electron-app",
-    "postinstall": "playwright install chromium"
+    "dist:linux": "npm run dist:linux -w @buzzbo/electron-app"
   },
   "devDependencies": {
-    "playwright": "^1.53.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "typescript": "^5.8.3"
   }
 }
