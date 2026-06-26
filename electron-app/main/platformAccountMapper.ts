@@ -12,6 +12,7 @@ export function platformAccountToBotConfig(account: Record<string, unknown>): Ac
         sourceMode: cfg.sourceMode as AccountConfig['sourceMode'],
         hashtags: cfg.hashtags as string[] | undefined,
         hashtagSearch: cfg.hashtagSearch as AccountConfig['hashtagSearch'],
+        feedBrowse: cfg.feedBrowse as AccountConfig['feedBrowse'],
         instagramApiAccessToken: cfg.instagramApiAccessToken as string | undefined,
         instagramApiUserId: cfg.instagramApiUserId as string | undefined,
         aiPromptHint: cfg.aiPromptHint as string | undefined,

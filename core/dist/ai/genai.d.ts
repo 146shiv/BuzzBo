@@ -18,9 +18,21 @@ export interface GenerateCommentOverrides {
     imageData?: MediaPayload | null;
     preserveErrorMessage?: boolean;
 }
+export interface SkillsRelevanceAssessment {
+    relevant: boolean;
+    score: number;
+    reason: string;
+}
+export interface AssessSkillsRelevanceOptions {
+    imageUrl?: string;
+    videoUrl?: string;
+    authorUsername?: string;
+    imageData?: MediaPayload | null;
+}
 export interface AICommentGeneratorAdapter {
     supportsVideoAnalysis(): boolean;
     generateInstagramComment(postText: string, targetUsername: string, promptHint?: string, imageUrl?: string, videoUrl?: string, channelSkillsContext?: string, mentionHandle?: string, overrides?: GenerateCommentOverrides): Promise<string>;
+    assessSkillsRelevance(postText: string, skillsContext: string, options?: AssessSkillsRelevanceOptions): Promise<SkillsRelevanceAssessment>;
 }
 export declare function fetchImageAsBase64ForComment(imageUrl: string): Promise<MediaPayload | null>;
 export declare class AICommentGenerator implements AICommentGeneratorAdapter {
@@ -47,6 +59,10 @@ export declare class AICommentGenerator implements AICommentGeneratorAdapter {
     private generateWithOpenAiCompatible;
     supportsVideoAnalysis(): boolean;
     generateInstagramComment(postText: string, targetUsername: string, promptHint?: string, imageUrl?: string, videoUrl?: string, channelSkillsContext?: string, mentionHandle?: string, overrides?: GenerateCommentOverrides): Promise<string>;
+    private buildRelevancePrompt;
+    private callLlmRawText;
+    private callOpenAiCompatibleRaw;
+    assessSkillsRelevance(postText: string, skillsContext: string, options?: AssessSkillsRelevanceOptions): Promise<SkillsRelevanceAssessment>;
 }
 export declare function isSubstantiveCaption(caption: string): boolean;
 export declare function isMetaRefusalComment(text: string): boolean;
@@ -54,4 +70,6 @@ export declare function isLowQualityAiComment(text: string): boolean;
 export declare function isUnusableAiComment(text: string): boolean;
 export declare function getGenericStudyFallbackComment(mentionHandle?: string): string;
 export declare function hasActionablePostContext(postText: string, imageUrl?: string, videoUrl?: string, videoAnalysisAvailable?: boolean, isVideoPost?: boolean): boolean;
+export declare function parseSkillsRelevanceResponse(raw: string): SkillsRelevanceAssessment;
+export declare function isSkillsRelevanceMatch(assessment: SkillsRelevanceAssessment, minScore: number): boolean;
 //# sourceMappingURL=genai.d.ts.map

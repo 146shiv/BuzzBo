@@ -38,6 +38,17 @@ export interface GenerateCommentRequest {
         mimeType: string;
     };
 }
+export interface AssessRelevanceRequest {
+    postText: string;
+    skillsContext: string;
+    authorUsername?: string;
+    imageUrl?: string;
+    videoUrl?: string;
+    imageData?: {
+        data: string;
+        mimeType: string;
+    };
+}
 export declare function resolveAdminApiBaseUrl(): string | null;
 export declare class AdminApiClient {
     private readonly options;
@@ -72,6 +83,11 @@ export declare class AdminApiClient {
     }>;
     generateComment(body: GenerateCommentRequest): Promise<{
         comment: string;
+    }>;
+    assessRelevance(body: AssessRelevanceRequest): Promise<{
+        relevant: boolean;
+        score: number;
+        reason: string;
     }>;
 }
 export declare function createApiClientFromEnv(): AdminApiClient | null;

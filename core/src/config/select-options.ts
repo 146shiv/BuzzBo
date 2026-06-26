@@ -45,6 +45,12 @@ export const SOURCE_MODE_OPTIONS: SelectOption[] = [
     { value: 'url_list', label: 'URL List' },
     { value: 'hashtag_list', label: 'Hashtag (UI)' },
     { value: 'hashtag_api', label: 'Hashtag (API)' },
+    { value: 'feed_browse', label: 'Feed Browse' },
+];
+
+export const FEED_BROWSE_SURFACE_OPTIONS: SelectOption[] = [
+    { value: 'reels', label: 'Reels tab' },
+    { value: 'home', label: 'Home feed' },
 ];
 
 export const MENTION_POLICY_OPTIONS: SelectOption[] = [

@@ -59,3 +59,17 @@ export const generateCommentSchema = z.object({
         })
         .optional(),
 });
+
+export const assessRelevanceSchema = z.object({
+    postText: z.string(),
+    skillsContext: z.string().min(1),
+    authorUsername: z.string().optional(),
+    imageUrl: z.string().optional(),
+    videoUrl: z.string().optional(),
+    imageData: z
+        .object({
+            data: z.string().min(1),
+            mimeType: z.string().min(1),
+        })
+        .optional(),
+});

@@ -36,6 +36,15 @@ export interface GenerateCommentRequest {
     imageData?: { data: string; mimeType: string };
 }
 
+export interface AssessRelevanceRequest {
+    postText: string;
+    skillsContext: string;
+    authorUsername?: string;
+    imageUrl?: string;
+    videoUrl?: string;
+    imageData?: { data: string; mimeType: string };
+}
+
 export function resolveAdminApiBaseUrl(): string | null {
     const baseUrl =
         process.env.BUZZBO_ADMIN_API_URL?.trim() ||
@@ -180,6 +189,20 @@ export class AdminApiClient {
             method: 'POST',
             body: JSON.stringify(body),
         });
+    }
+
+    async assessRelevance(body: AssessRelevanceRequest): Promise<{
+        relevant: boolean;
+        score: number;
+        reason: string;
+    }> {
+        return this.request<{ relevant: boolean; score: number; reason: string }>(
+            '/api/bot/ai/assess-relevance',
+            {
+                method: 'POST',
+                body: JSON.stringify(body),
+            }
+        );
     }
 }
 

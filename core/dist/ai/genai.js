@@ -8,6 +8,8 @@ exports.isLowQualityAiComment = isLowQualityAiComment;
 exports.isUnusableAiComment = isUnusableAiComment;
 exports.getGenericStudyFallbackComment = getGenericStudyFallbackComment;
 exports.hasActionablePostContext = hasActionablePostContext;
+exports.parseSkillsRelevanceResponse = parseSkillsRelevanceResponse;
+exports.isSkillsRelevanceMatch = isSkillsRelevanceMatch;
 const genai_1 = require("@google/genai");
 /** Sliding-window limiter: max N AI API calls per 60 seconds. */
 class AiRateLimiter {
@@ -307,6 +309,113 @@ class AICommentGenerator {
             throw new Error(`Failed to generate comment for @${targetUsername} using ${this.provider}.`);
         }
     }
+    buildRelevancePrompt(postText, skillsContext, authorUsername, hasMedia = false) {
+        const sections = [
+            'Decide if an Instagram post/reel is a good match for commenting using the channel skills below.',
+            '',
+            '## Post caption',
+            postText.trim() || '(no caption — infer topic from attached media if present)',
+        ];
+        if (authorUsername) {
+            sections.push('', '## Author', `@${authorUsername}`);
+        }
+        if (hasMedia) {
+            sections.push('', 'Media is attached — consider visual topic as well as caption.');
+        }
+        sections.push('', '## Channel skills (topics, voice, niche)', skillsContext.trim() || '(no skills defined — treat as low relevance)', '', '## Rules', '- relevant=true only when the post topic clearly overlaps the skills niche (topics, pain points, audience).', '- Generic lifestyle, unrelated humor, or off-niche content → relevant=false.', '- score is 0.0–1.0 confidence that a contextual promotional comment fits.', '', '## Output', 'Return ONLY valid JSON with keys: relevant (boolean), score (number 0-1), reason (short string).', 'Example: {"relevant":true,"score":0.82,"reason":"Exam stress and procrastination match study-app skills"}');
+        return sections.join('\n');
+    }
+    async callLlmRawText(promptText, imageData, videoData) {
+        switch (this.provider) {
+            case 'gemini': {
+                const contents = [];
+                if (videoData) {
+                    contents.push({
+                        inlineData: { mimeType: videoData.mimeType, data: videoData.data },
+                    });
+                }
+                else if (imageData) {
+                    contents.push({
+                        inlineData: { mimeType: imageData.mimeType, data: imageData.data },
+                    });
+                }
+                contents.push({ text: promptText });
+                await this.rateLimiter.acquire();
+                const genAI = new genai_1.GoogleGenAI({ apiKey: this.googleAiApiKey });
+                const result = await genAI.models.generateContent({
+                    model: 'gemini-2.0-flash',
+                    contents,
+                    config: { ...this.generationConfig, temperature: 0.2, maxOutputTokens: 120 },
+                });
+                return (result.text ?? '').trim();
+            }
+            case 'groq':
+                return this.callOpenAiCompatibleRaw('groq', 'https://api.groq.com/openai/v1', this.groqApiKey, imageData ? this.groqVisionModel : this.groqModel, this.buildOpenAiMessages(promptText, imageData));
+            case 'local':
+                return this.callOpenAiCompatibleRaw('local', this.localLlmBaseUrl, undefined, this.localLlmModel, this.buildOpenAiMessages(promptText, imageData));
+            default:
+                throw new Error(`Unsupported AI provider: ${this.provider}`);
+        }
+    }
+    async callOpenAiCompatibleRaw(providerLabel, apiUrl, apiKey, model, messages) {
+        await this.rateLimiter.acquire();
+        const headers = { 'Content-Type': 'application/json' };
+        if (apiKey)
+            headers.Authorization = `Bearer ${apiKey}`;
+        const response = await fetch(`${apiUrl}/chat/completions`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                model,
+                messages,
+                temperature: 0.2,
+                max_tokens: 120,
+            }),
+        });
+        if (!response.ok) {
+            const errorBody = await response.text();
+            throw new Error(`${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`);
+        }
+        const payload = (await response.json());
+        return (payload.choices?.[0]?.message?.content ?? '').trim();
+    }
+    async assessSkillsRelevance(postText, skillsContext, options) {
+        if (this.mockComments) {
+            return {
+                relevant: true,
+                score: 0.85,
+                reason: 'Mock mode — treating item as relevant',
+            };
+        }
+        const skills = skillsContext?.trim();
+        if (!skills) {
+            return { relevant: false, score: 0, reason: 'No skills/style guide configured for this account' };
+        }
+        let imageData = options?.imageData ?? null;
+        let videoData = null;
+        let hasMedia = Boolean(imageData);
+        if (options?.videoUrl && this.provider === 'gemini') {
+            videoData = await this.fetchVideoAsBase64(options.videoUrl);
+            hasMedia = Boolean(videoData);
+        }
+        else if (!imageData && options?.imageUrl) {
+            imageData = await fetchImageAsBase64ForComment(options.imageUrl);
+            hasMedia = Boolean(imageData);
+        }
+        const promptText = this.buildRelevancePrompt(postText, skills, options?.authorUsername, hasMedia);
+        try {
+            const raw = await this.callLlmRawText(promptText, imageData, videoData);
+            return parseSkillsRelevanceResponse(raw);
+        }
+        catch (error) {
+            console.error(`[AI_ERROR] Relevance assessment failed:`, error);
+            return {
+                relevant: false,
+                score: 0,
+                reason: error instanceof Error ? error.message : 'Relevance assessment failed',
+            };
+        }
+    }
 }
 exports.AICommentGenerator = AICommentGenerator;
 const META_REFUSAL_PATTERNS = [
@@ -404,4 +513,27 @@ function hasActionablePostContext(postText, imageUrl, videoUrl, videoAnalysisAva
         return substantiveCaption;
     }
     return substantiveCaption;
+}
+function parseSkillsRelevanceResponse(raw) {
+    const trimmed = raw.trim();
+    const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+        return { relevant: false, score: 0, reason: 'Could not parse AI relevance response' };
+    }
+    try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        const score = typeof parsed.score === 'number' ? Math.min(1, Math.max(0, parsed.score)) : 0;
+        const relevant = Boolean(parsed.relevant) && score >= 0.35;
+        return {
+            relevant,
+            score,
+            reason: String(parsed.reason ?? '').trim() || 'No reason provided',
+        };
+    }
+    catch {
+        return { relevant: false, score: 0, reason: 'Invalid JSON from relevance assessment' };
+    }
+}
+function isSkillsRelevanceMatch(assessment, minScore) {
+    return assessment.relevant && assessment.score >= minScore;
 }

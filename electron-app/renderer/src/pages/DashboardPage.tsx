@@ -24,6 +24,7 @@ interface AccountRow {
     id: string;
     username: string;
     enabled: boolean;
+    sourceMode?: string;
 }
 
 interface BotStatus {
@@ -85,6 +86,8 @@ export default function DashboardPage({
     const selectedRef = useRef(selectedId);
     selectedRef.current = selectedId;
 
+    const [selectedSourceMode, setSelectedSourceMode] = useState<string>('');
+
     async function loadAccounts() {
         setAccountsLoading(true);
         // #region agent log
@@ -126,6 +129,30 @@ export default function DashboardPage({
     useEffect(() => {
         if (selectedId) localStorage.setItem('buzzbo-selected-account', selectedId);
     }, [selectedId]);
+
+    useEffect(() => {
+        if (!selectedId) {
+            setSelectedSourceMode('');
+            return;
+        }
+        void window.buzzbo.accounts.get(selectedId).then(account => {
+            const cfg = ((account as Record<string, unknown>).config as Record<string, unknown>) || {};
+            setSelectedSourceMode(String(cfg.sourceMode || 'hashtag_list'));
+        });
+    }, [selectedId, settingsOpen]);
+
+    const sourceModeLabel =
+        selectedSourceMode === 'feed_browse'
+            ? 'Feed Browse'
+            : selectedSourceMode === 'hashtag_list'
+              ? 'Hashtag (UI)'
+              : selectedSourceMode === 'hashtag_api'
+                ? 'Hashtag (API)'
+                : selectedSourceMode === 'url_list'
+                  ? 'URL List'
+                  : selectedSourceMode === 'new_post_added_to_account'
+                    ? 'Monitor Profiles'
+                    : selectedSourceMode || 'Hashtag (UI)';
 
     useEffect(() => {
         const unsubStatus = window.buzzbo.bot.onStatus(s => setStatus(s as BotStatus));
@@ -214,10 +241,15 @@ export default function DashboardPage({
                 <div className="flex items-center gap-2">
                     {status.running ? (
                         <Badge variant="success" data-testid="bot-running-badge">
-                            Running
+                            Running{status.mode ? ` · ${status.mode}` : ''}
                         </Badge>
                     ) : (
                         <Badge variant="muted">Idle</Badge>
+                    )}
+                    {selectedId && !status.running && (
+                        <Badge variant="outline" title="Source mode for next run">
+                            Mode: {sourceModeLabel}
+                        </Badge>
                     )}
                 </div>
 

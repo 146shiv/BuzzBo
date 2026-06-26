@@ -148,6 +148,24 @@ export class BotRunner extends EventEmitter {
         const logger = new UiLogger(runConfig.accountUsername, this);
         const skills = runConfig.skillsContent?.trim() || runConfig.account.skillsContent;
 
+        const modeLabel =
+            runConfig.sourceMode === 'feed_browse'
+                ? 'Feed Browse'
+                : runConfig.sourceMode === 'hashtag_list'
+                  ? 'Hashtag (UI)'
+                  : runConfig.sourceMode === 'hashtag_api'
+                    ? 'Hashtag (API)'
+                    : runConfig.sourceMode === 'url_list'
+                      ? 'URL List'
+                      : runConfig.sourceMode;
+        logger.header(`Starting @${runConfig.accountUsername} — source mode: ${modeLabel} (${runConfig.sourceMode})`);
+
+        if (runConfig.sourceMode === 'feed_browse') {
+            logger.info(
+                'Feed Browse opens /reels/ and scrolls in-feed (not hashtag pages). Ensure Source Mode is saved as Feed Browse in handle settings.'
+            );
+        }
+
         try {
             switch (runConfig.sourceMode) {
                 case 'url_list':
@@ -158,6 +176,9 @@ export class BotRunner extends EventEmitter {
                     break;
                 case 'hashtag_api':
                     await this.runHashtagApi(runConfig, logger, skills);
+                    break;
+                case 'feed_browse':
+                    await this.runFeedBrowse(runConfig, logger, skills);
                     break;
                 default:
                     logger.error(`Source mode "${runConfig.sourceMode}" is not supported yet.`);
@@ -542,6 +563,104 @@ export class BotRunner extends EventEmitter {
             await browser.close();
             this.browser = null;
         }
+    }
+
+    private async runFeedBrowse(
+        runConfig: RunConfig,
+        logger: UiLogger,
+        skills?: string
+    ): Promise<void> {
+        const resolved = resolveAccountSettings(runConfig.account, runConfig.settings);
+        const feedConfig = resolved.feedBrowse;
+
+        if (!skills?.trim() && !runConfig.account.skillsContent?.trim()) {
+            logger.error('Feed Browse requires a skills/style guide on the account.');
+            return;
+        }
+
+        logger.info(
+            `Feed browse — surfaces: ${feedConfig.surfaces.join(', ')}; scan up to ${feedConfig.maxItemsToScan} items; comment up to ${feedConfig.maxCommentsPerRun}`
+        );
+
+        await this.preloadCommentHistory(runConfig.accountUsername);
+
+        const session = await initializeBotSession(
+            runConfig.account,
+            runConfig.settings,
+            this.aiGenerator,
+            this.commentHistory,
+            logger,
+            skills,
+            { headless: runConfig.settings.headless }
+        );
+        if (!session) return;
+
+        const { browser, bot } = session;
+        this.browser = browser;
+
+        const state = { itemsScanned: 0, commentsPosted: 0 };
+        const callbacks = {
+            shouldStop: () => this.stopRequested,
+            onItemComplete: (context: { postUrl: string; shortcode: string }, result: string) => {
+                this.emitComment(
+                    runConfig.accountUsername,
+                    context.postUrl,
+                    result === 'SUCCESS' ? 'Comment posted' : result,
+                    result === 'SUCCESS' ? 'success' : result.toLowerCase()
+                );
+            },
+        };
+
+        try {
+            for (const surface of feedConfig.surfaces) {
+                if (this.stopRequested) break;
+
+                this.updateStatus({
+                    mode: 'feed_browse',
+                    accountUsername: runConfig.accountUsername,
+                    currentUrl: surface === 'reels' ? '/reels/' : '/',
+                });
+
+                if (surface === 'reels') {
+                    logger.header('Feed Browse — Reels tab');
+                    await bot.runFeedBrowseReels(
+                        feedConfig,
+                        runConfig.aiPromptHint,
+                        callbacks,
+                        state
+                    );
+                } else if (surface === 'home') {
+                    logger.header('Feed Browse — Home feed');
+                    await bot.runFeedBrowseHome(
+                        feedConfig,
+                        runConfig.aiPromptHint,
+                        callbacks,
+                        state
+                    );
+                }
+
+                if (this.feedBrowseLimitsReached(feedConfig, state)) {
+                    break;
+                }
+            }
+
+            logger.info(
+                `Feed browse finished — scanned ${state.itemsScanned} item(s), posted ${state.commentsPosted} comment(s).`
+            );
+        } finally {
+            await browser.close();
+            this.browser = null;
+        }
+    }
+
+    private feedBrowseLimitsReached(
+        config: { maxItemsToScan: number; maxCommentsPerRun: number },
+        state: { itemsScanned: number; commentsPosted: number }
+    ): boolean {
+        return (
+            state.itemsScanned >= config.maxItemsToScan ||
+            state.commentsPosted >= config.maxCommentsPerRun
+        );
     }
 }
 

@@ -24,6 +24,19 @@ export declare class HumanBehavior {
         max: number;
         typoChance?: number;
     }): Promise<void>;
+    /**
+     * Type into Instagram's contenteditable comment box.
+     * ASCII uses keyboard events; emoji/Unicode uses DOM insert (CDP insertText corrupts in Lexical).
+     */
+    typeTextInField(element: Locator, text: string, options?: {
+        min: number;
+        max: number;
+        typoChance?: number;
+    }): Promise<void>;
+    /** Insert Unicode into a contenteditable via browser DOM APIs (reliable for Instagram Lexical). */
+    insertTextIntoEditable(element: Locator, text: string): Promise<void>;
+    private pasteTextIntoEditable;
+    private typeAsciiWithKeyboard;
     hesitateAndClick(selector: string | Locator, options?: {
         clickDuration?: number;
     }): Promise<void>;

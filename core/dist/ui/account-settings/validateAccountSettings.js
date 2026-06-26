@@ -46,6 +46,8 @@ function validateAccountSettings(account) {
             }
             break;
         }
+        case 'feed_browse':
+            break;
     }
     return null;
 }

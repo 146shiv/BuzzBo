@@ -46,6 +46,8 @@ export function validateAccountSettings(account: Record<string, unknown>): strin
             }
             break;
         }
+        case 'feed_browse':
+            break;
     }
 
     return null;

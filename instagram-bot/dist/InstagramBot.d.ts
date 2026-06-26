@@ -1,5 +1,5 @@
 import { Page, BrowserContext } from 'playwright';
-import { AccountConfig, SettingsConfig, UiHashtagSearchConfig } from '@buzzbo/core/config';
+import { AccountConfig, FeedBrowseConfig, SettingsConfig, UiHashtagSearchConfig } from '@buzzbo/core/config';
 import { PauseState } from './humanBehavior';
 import { Logger } from '@buzzbo/core/logger/logger';
 import { AICommentGeneratorAdapter } from '@buzzbo/core/ai/genai';
@@ -7,6 +7,24 @@ import type { CommentHistoryAdapter } from '@buzzbo/core/comments';
 import { HashtagPostCandidate } from './hashtagRanking';
 export type InteractionResult = 'SUCCESS' | 'SKIPPED' | 'FAILED';
 export type { HashtagPostCandidate } from './hashtagRanking';
+export interface FeedBrowseRunState {
+    itemsScanned: number;
+    commentsPosted: number;
+}
+export interface FeedBrowseCallbacks {
+    shouldStop?: () => boolean;
+    onItemComplete?: (context: FeedItemContext, result: InteractionResult) => void;
+}
+export interface FeedItemContext {
+    authorUsername: string;
+    caption: string;
+    shortcode: string;
+    postUrl: string;
+    postImageUrl?: string;
+    postVideoUrl?: string;
+    isReel: boolean;
+    contentType: 'reel' | 'post';
+}
 export interface BotRuntimePaths {
     cookiePath?: string;
     logsDir?: string;
@@ -50,6 +68,8 @@ export declare class InstagramBot {
     private getMentionPolicy;
     private ensureChannelMention;
     private confirmInstagramMention;
+    private readCommentInputValue;
+    private repairCommentInputEncoding;
     private typeCommentWithMentions;
     private resolveCommentNavigationUrl;
     private ensurePostViewLayout;
@@ -72,10 +92,15 @@ export declare class InstagramBot {
     private skipUnreadablePost;
     private waitForPostLoaded;
     private parseProfileHref;
+    private parseUsernameFromProfileAlt;
+    private isReelsFeedUrl;
     private extractPostAuthorUsername;
     private looksLikeUsernameOnly;
     private expandCaptionIfNeeded;
     private extractPostCaption;
+    private extractPostMediaFromRoot;
+    private buildCommentForPost;
+    private submitTopLevelComment;
     private commentOnOpenPost;
     runCommentTaskOnUrl(postUrl: string, aiPromptHint?: string): Promise<InteractionResult>;
     private parseEngagementCount;
@@ -91,5 +116,30 @@ export declare class InstagramBot {
     }>;
     discoverAndRankHashtagPosts(hashtag: string, searchConfig: UiHashtagSearchConfig, skipShortcodes?: Set<string>): Promise<HashtagPostCandidate[]>;
     runCommentTask(targetUsername: string, aiPromptHint?: string): Promise<InteractionResult>;
+    private static readonly RESERVED_PROFILE_SEGMENTS;
+    private parseShortcodeFromHref;
+    private getAttributeSafe;
+    private extractReelsFeedItemFromDom;
+    private waitForReelUrlShortcode;
+    private getActiveReelsFeedRoot;
+    private extractAuthorFromArticle;
+    private getWatchItemDelayMs;
+    private feedBrowseLimitsReached;
+    openReelsFeed(): Promise<void>;
+    openHomeFeed(): Promise<void>;
+    private resolveVisibleReelShortcode;
+    private resolveCurrentReelShortcodeOnFeed;
+    private buildFeedItemContextFromPostPage;
+    private returnToReelsFeed;
+    private extractCurrentReelContext;
+    private collectVisibleHomeFeedLinks;
+    private extractCaptionFromArticle;
+    private extractHomeFeedItemContext;
+    private processFeedItem;
+    private scrollToNextReel;
+    private closePostDialogIfOpen;
+    private openHomeFeedPost;
+    runFeedBrowseReels(config: FeedBrowseConfig, aiPromptHint: string | undefined, callbacks: FeedBrowseCallbacks, state: FeedBrowseRunState): Promise<void>;
+    runFeedBrowseHome(config: FeedBrowseConfig, aiPromptHint: string | undefined, callbacks: FeedBrowseCallbacks, state: FeedBrowseRunState): Promise<void>;
 }
 //# sourceMappingURL=InstagramBot.d.ts.map

@@ -95,7 +95,13 @@ export const handlers = {
     },
 
     async 'bot:start'(_e: unknown, payload: { accountId: string }) {
-        const account = appContext.rawAccounts.find(a => String(a.id) === payload.accountId);
+        const client = appContext.ensureClient();
+        await appContext.refreshConfig();
+
+        let account = appContext.rawAccounts.find(a => String(a.id) === payload.accountId);
+        if (!account) {
+            account = (await client.getAccount(payload.accountId)) as Record<string, unknown>;
+        }
         if (!account) throw new Error('Account not found');
         if (!account.enabled) throw new Error('Account is disabled');
         const platform = Number(account.platform ?? Platform.Instagram);

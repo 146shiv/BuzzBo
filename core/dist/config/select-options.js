@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PLATFORM_OPTIONS = exports.MENTION_POLICY_OPTIONS = exports.SOURCE_MODE_OPTIONS = exports.LOGIN_METHOD_OPTIONS = exports.AI_PROVIDER_OPTIONS = exports.BROWSER_CHANNEL_OPTIONS = exports.HEADLESS_OPTIONS = exports.BOOL_ENABLED = exports.BOOL_YES_NO = exports.BOOL_ON_OFF = void 0;
+exports.PLATFORM_OPTIONS = exports.MENTION_POLICY_OPTIONS = exports.FEED_BROWSE_SURFACE_OPTIONS = exports.SOURCE_MODE_OPTIONS = exports.LOGIN_METHOD_OPTIONS = exports.AI_PROVIDER_OPTIONS = exports.BROWSER_CHANNEL_OPTIONS = exports.HEADLESS_OPTIONS = exports.BOOL_ENABLED = exports.BOOL_YES_NO = exports.BOOL_ON_OFF = void 0;
 exports.BOOL_ON_OFF = [
     { value: 'false', label: 'Off' },
     { value: 'true', label: 'On' },
@@ -36,6 +36,11 @@ exports.SOURCE_MODE_OPTIONS = [
     { value: 'url_list', label: 'URL List' },
     { value: 'hashtag_list', label: 'Hashtag (UI)' },
     { value: 'hashtag_api', label: 'Hashtag (API)' },
+    { value: 'feed_browse', label: 'Feed Browse' },
+];
+exports.FEED_BROWSE_SURFACE_OPTIONS = [
+    { value: 'reels', label: 'Reels tab' },
+    { value: 'home', label: 'Home feed' },
 ];
 exports.MENTION_POLICY_OPTIONS = [
     { value: 'ai_only', label: 'AI Only' },

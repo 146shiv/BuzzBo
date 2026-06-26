@@ -4,16 +4,21 @@ import * as fs from 'fs';
 import {
     AccountConfig,
     BehaviorConfig,
+    FeedBrowseConfig,
     MentionPolicy,
     SettingsConfig,
     UiHashtagSearchConfig,
 } from '@buzzbo/core/config';
 import { HumanBehavior, PauseState } from './humanBehavior';
+import {
+    commentTextHasEncodingCorruption,
+} from './textEncoding';
 import { Logger } from '@buzzbo/core/logger/logger';
 import {
     AICommentGeneratorAdapter,
     getGenericStudyFallbackComment,
     hasActionablePostContext,
+    isSkillsRelevanceMatch,
     isUnusableAiComment,
 } from '@buzzbo/core/ai/genai';
 import type { CommentHistoryAdapter } from '@buzzbo/core/comments';
@@ -27,6 +32,27 @@ import {
 
 export type InteractionResult = 'SUCCESS' | 'SKIPPED' | 'FAILED';
 export type { HashtagPostCandidate } from './hashtagRanking';
+
+export interface FeedBrowseRunState {
+    itemsScanned: number;
+    commentsPosted: number;
+}
+
+export interface FeedBrowseCallbacks {
+    shouldStop?: () => boolean;
+    onItemComplete?: (context: FeedItemContext, result: InteractionResult) => void;
+}
+
+export interface FeedItemContext {
+    authorUsername: string;
+    caption: string;
+    shortcode: string;
+    postUrl: string;
+    postImageUrl?: string;
+    postVideoUrl?: string;
+    isReel: boolean;
+    contentType: 'reel' | 'post';
+}
 
 export interface BotRuntimePaths {
     cookiePath?: string;
@@ -479,6 +505,39 @@ export class InstagramBot {
         await this.humanBehavior.randomDelay(300, 600);
     }
 
+    private async readCommentInputValue(input: Locator): Promise<string> {
+        return input.evaluate((el: HTMLElement | HTMLTextAreaElement | HTMLInputElement) => {
+            if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+                return el.value;
+            }
+
+            return el.innerText || el.textContent || '';
+        });
+    }
+
+    private async repairCommentInputEncoding(commentInput: Locator, expected: string): Promise<void> {
+        let actual = await this.readCommentInputValue(commentInput);
+        if (!commentTextHasEncodingCorruption(expected, actual)) {
+            return;
+        }
+
+        const replacementCount = (actual.match(/\uFFFD/g) ?? []).length;
+        for (let i = 0; i < replacementCount; i++) {
+            await commentInput.focus();
+            await this.page.keyboard.press('Backspace');
+            await this.humanBehavior.randomDelay(80, 150);
+        }
+
+        actual = await this.readCommentInputValue(commentInput);
+        const expectedEmoji = expected.match(/\p{Extended_Pictographic}+/gu) ?? [];
+        for (const emoji of expectedEmoji) {
+            if (!actual.includes(emoji)) {
+                await this.humanBehavior.insertTextIntoEditable(commentInput, emoji);
+                await this.humanBehavior.randomDelay(200, 400);
+            }
+        }
+    }
+
     private async typeCommentWithMentions(commentInput: Locator, text: string): Promise<void> {
         const mentionPattern = /@[a-zA-Z0-9._]+/g;
         const parts = text.split(mentionPattern);
@@ -488,14 +547,14 @@ export class InstagramBot {
         await this.humanBehavior.randomDelay(300, 800);
 
         if (mentions.length === 0) {
-            await this.humanBehavior.typeText(text);
+            await this.humanBehavior.typeTextInField(commentInput, text);
             return;
         }
 
         for (let i = 0; i < parts.length; i++) {
             const segment = parts[i];
             if (segment) {
-                await this.humanBehavior.typeText(segment);
+                await this.humanBehavior.typeTextInField(commentInput, segment);
             }
 
             const mention = mentions[i];
@@ -800,6 +859,10 @@ export class InstagramBot {
             } catch (e) {}
         }
 
+        if (/\/reels?\/?$/i.test(this.page.url()) || this.isReelsFeedUrl()) {
+            return this.getActiveReelsFeedRoot();
+        }
+
         const article = this.page.locator('article').first();
         if ((await article.count()) > 0) {
             return article;
@@ -893,22 +956,71 @@ export class InstagramBot {
             return null;
         }
 
-        const match = href.match(/^\/([^/?#]+)\/?$/);
-        if (!match || match[1] === 'p' || match[1] === 'reel' || match[1] === 'reels') {
+        let path = href.trim();
+        try {
+            if (path.startsWith('http')) {
+                path = new URL(path).pathname;
+            }
+        } catch {
+            return null;
+        }
+
+        const match = path.match(/^\/([^/?#]+)\/?$/);
+        if (!match || InstagramBot.RESERVED_PROFILE_SEGMENTS.has(match[1].toLowerCase())) {
             return null;
         }
 
         return match[1];
     }
 
+    private parseUsernameFromProfileAlt(alt: string | null | undefined): string | null {
+        if (!alt) {
+            return null;
+        }
+
+        const patterns = [
+            /^@?([a-zA-Z0-9._]+)'s profile picture$/i,
+            /^@?([a-zA-Z0-9._]+)'s profile$/i,
+            /^Profile picture of @?([a-zA-Z0-9._]+)$/i,
+            /^@?([a-zA-Z0-9._]+)$/,
+        ];
+
+        for (const pattern of patterns) {
+            const match = alt.trim().match(pattern);
+            if (match?.[1] && !InstagramBot.RESERVED_PROFILE_SEGMENTS.has(match[1].toLowerCase())) {
+                return match[1];
+            }
+        }
+
+        return null;
+    }
+
+    private isReelsFeedUrl(url = this.page.url()): boolean {
+        try {
+            const path = new URL(url).pathname.replace(/\/$/, '') || '/';
+            return path === '/reels';
+        } catch {
+            return false;
+        }
+    }
+
     private async extractPostAuthorUsername(): Promise<string | null> {
         try {
+            if (this.isReelsFeedUrl()) {
+                const fromDom = await this.extractReelsFeedItemFromDom();
+                if (fromDom?.authorUsername) {
+                    return fromDom.authorUsername;
+                }
+            }
+
             const postRoot = await this.getPostRootLocator();
             const authorCandidates = [
                 postRoot.locator('header a[href^="/"]').first(),
                 postRoot.locator('a[href^="/"][role="link"]').first(),
+                postRoot.locator('a[href*="/"]').filter({ has: postRoot.locator('img') }).first(),
                 this.page.locator('header a[href^="/"]').first(),
                 this.page.locator('section a[href^="/"]').first(),
+                this.page.locator('article header a[href^="/"]').first(),
             ];
 
             for (const authorLink of authorCandidates) {
@@ -916,10 +1028,30 @@ export class InstagramBot {
                     continue;
                 }
 
-                const href = await authorLink.getAttribute('href');
+                const href = await this.getAttributeSafe(authorLink, 'href', 1500);
                 const username = this.parseProfileHref(href);
                 if (username) {
                     return username;
+                }
+            }
+
+            const allProfileLinks = postRoot.locator('a[href^="/"]');
+            const linkCount = await allProfileLinks.count();
+            for (let i = 0; i < Math.min(linkCount, 24); i++) {
+                const href = await this.getAttributeSafe(allProfileLinks.nth(i), 'href', 1000);
+                const username = this.parseProfileHref(href);
+                if (username) {
+                    return username;
+                }
+            }
+
+            const profileImages = postRoot.locator('img[alt*="profile" i], header img[alt], img[alt]');
+            const imageCount = await profileImages.count();
+            for (let i = 0; i < Math.min(imageCount, 6); i++) {
+                const alt = await this.getAttributeSafe(profileImages.nth(i), 'alt', 1000);
+                const fromAlt = this.parseUsernameFromProfileAlt(alt);
+                if (fromAlt) {
+                    return fromAlt;
                 }
             }
 
@@ -1017,34 +1149,10 @@ export class InstagramBot {
         return unique[0];
     }
 
-    private async commentOnOpenPost(
-        targetUsername: string,
-        aiPromptHint: string | undefined,
-        postShortcode: string
-    ): Promise<InteractionResult> {
-        if (this.commentHistory.hasCommented(this.config.username, postShortcode)) {
-            this.logger.warn(`Already commented on post ${postShortcode}. Skipping.`);
-            return 'SKIPPED';
-        }
-
-        const postRoot = await this.getPostRootLocator();
-        const isReel = this.isReelUrl();
-        this.logger.success(isReel ? 'Reel content loaded.' : 'Post content loaded.');
-
-        this.logger.action('Extracting post caption...');
-        let postCaption = '';
-        try {
-            postCaption = await this.extractPostCaption(postRoot);
-            if (postCaption) {
-                this.logger.info(`Found caption: "${postCaption.substring(0, 50)}..."`);
-            } else {
-                this.logger.info('No caption found on this post.');
-            }
-        } catch (e) {
-            this.logger.warn('Could not extract post caption.');
-        }
-
-        this.logger.action('Extracting post media (image/video)...');
+    private async extractPostMediaFromRoot(
+        postRoot: Locator,
+        isReel: boolean
+    ): Promise<{ postImageUrl?: string; postVideoUrl?: string }> {
         let postImageUrl: string | undefined;
         let postVideoUrl: string | undefined;
 
@@ -1064,14 +1172,12 @@ export class InstagramBot {
                     this.logger.warn('Video post detected but no video URL was captured from network requests');
                 }
 
-                if (!postImageUrl) {
-                    const poster = await videoElement.first().getAttribute('poster');
-                    if (poster && !poster.includes('static') && !poster.includes('sprite')) {
-                        postImageUrl = poster;
-                        this.logger.info(`Using video poster thumbnail for AI: ${poster.substring(0, 80)}...`);
-                    }
+                const poster = await videoElement.first().getAttribute('poster');
+                if (poster && !poster.includes('static') && !poster.includes('sprite')) {
+                    postImageUrl = poster;
+                    this.logger.info(`Using video poster thumbnail for AI: ${poster.substring(0, 80)}...`);
                 }
-            } else {
+            } else if (!isReel) {
                 const imageLocators = [
                     postRoot.locator('img[src*="instagram"]').first(),
                     postRoot.locator('img[alt]').first(),
@@ -1093,10 +1199,21 @@ export class InstagramBot {
                     this.logger.info('No post image found or image could not be extracted.');
                 }
             }
-        } catch (e) {
+        } catch {
             this.logger.warn('Could not extract post media.');
         }
 
+        return { postImageUrl, postVideoUrl };
+    }
+
+    private async buildCommentForPost(
+        targetUsername: string,
+        aiPromptHint: string | undefined,
+        postCaption: string,
+        postImageUrl: string | undefined,
+        postVideoUrl: string | undefined,
+        isReel: boolean
+    ): Promise<string> {
         const isVideoPost = isReel || Boolean(postVideoUrl);
         const hasContext = hasActionablePostContext(
             postCaption,
@@ -1126,8 +1243,9 @@ export class InstagramBot {
                     this.channelSkillsContext,
                     this.getMentionHandle()
                 );
-            } catch (error: any) {
-                this.logger.warn(`AI generation failed (${error.message}); using generic study fallback.`);
+            } catch (error: unknown) {
+                const msg = error instanceof Error ? error.message : String(error);
+                this.logger.warn(`AI generation failed (${msg}); using generic study fallback.`);
                 aiComment = getGenericStudyFallbackComment(this.getMentionHandle());
             }
 
@@ -1144,6 +1262,15 @@ export class InstagramBot {
             this.logger.success(`AI Generated Comment: "${aiComment}"`);
         }
 
+        return finalComment;
+    }
+
+    private async submitTopLevelComment(
+        postRoot: Locator,
+        finalComment: string,
+        postShortcode: string,
+        isReel: boolean
+    ): Promise<InteractionResult> {
         if (await this.areCommentsDisabled()) {
             this.logger.warn('Comments are disabled or limited on this post/reel. Skipping.');
             await this.page.screenshot({
@@ -1173,6 +1300,12 @@ export class InstagramBot {
 
         this.logger.action('Typing comment...');
         await this.typeCommentWithMentions(commentInput, finalComment);
+
+        const typedComment = await this.readCommentInputValue(commentInput);
+        if (commentTextHasEncodingCorruption(finalComment, typedComment)) {
+            await this.repairCommentInputEncoding(commentInput, finalComment);
+        }
+
         await this.humanBehavior.randomDelay(1500, 4000);
 
         let postButton = commentScope.locator('form').getByRole('button', { name: 'Post' });
@@ -1189,6 +1322,7 @@ export class InstagramBot {
         }
 
         this.logger.action('Submitting the comment...');
+
         await postButton.first().scrollIntoViewIfNeeded();
         await this.humanBehavior.hesitateAndClick(postButton.first());
         await this.humanBehavior.randomDelay(3000, 5000);
@@ -1211,6 +1345,48 @@ export class InstagramBot {
         });
         await this.logInteraction(postShortcode, 'comment', finalComment);
         return 'SUCCESS';
+    }
+
+    private async commentOnOpenPost(
+        targetUsername: string,
+        aiPromptHint: string | undefined,
+        postShortcode: string
+    ): Promise<InteractionResult> {
+        if (this.commentHistory.hasCommented(this.config.username, postShortcode)) {
+            this.logger.warn(`Already commented on post ${postShortcode}. Skipping.`);
+            return 'SKIPPED';
+        }
+
+        const postRoot = await this.getPostRootLocator();
+        const isReel = this.isReelUrl();
+        this.logger.success(isReel ? 'Reel content loaded.' : 'Post content loaded.');
+
+        this.logger.action('Extracting post caption...');
+        let postCaption = '';
+        try {
+            postCaption = await this.extractPostCaption(postRoot);
+            if (postCaption) {
+                this.logger.info(`Found caption: "${postCaption.substring(0, 50)}..."`);
+            } else {
+                this.logger.info('No caption found on this post.');
+            }
+        } catch (e) {
+            this.logger.warn('Could not extract post caption.');
+        }
+
+        this.logger.action('Extracting post media (image/video)...');
+        const { postImageUrl, postVideoUrl } = await this.extractPostMediaFromRoot(postRoot, isReel);
+
+        const finalComment = await this.buildCommentForPost(
+            targetUsername,
+            aiPromptHint,
+            postCaption,
+            postImageUrl,
+            postVideoUrl,
+            isReel
+        );
+
+        return this.submitTopLevelComment(postRoot, finalComment, postShortcode, isReel);
     }
 
     public async runCommentTaskOnUrl(postUrl: string, aiPromptHint?: string): Promise<InteractionResult> {
@@ -1600,6 +1776,847 @@ export class InstagramBot {
             return 'FAILED';
         } finally {
             this.isCapturingVideo = false;
+        }
+    }
+
+    private static readonly RESERVED_PROFILE_SEGMENTS = new Set([
+        'p',
+        'reel',
+        'reels',
+        'explore',
+        'accounts',
+        'stories',
+        'direct',
+        'tags',
+        'legal',
+        'about',
+        'developer',
+    ]);
+
+    private parseShortcodeFromHref(href: string | null | undefined): string | null {
+        if (!href) {
+            return null;
+        }
+        return extractPostShortcode(href.startsWith('http') ? href : `https://www.instagram.com${href}`);
+    }
+
+    private async getAttributeSafe(
+        locator: Locator,
+        attribute: string,
+        timeoutMs = 2000
+    ): Promise<string | null> {
+        try {
+            if ((await locator.count()) === 0) {
+                return null;
+            }
+            const el = locator.first();
+            if (!(await el.isVisible({ timeout: timeoutMs }).catch(() => false))) {
+                return null;
+            }
+            return await el.getAttribute(attribute, { timeout: timeoutMs });
+        } catch {
+            return null;
+        }
+    }
+
+    private async extractReelsFeedItemFromDom(): Promise<{
+        shortcode: string | null;
+        authorUsername: string | null;
+        caption: string;
+    } | null> {
+        return this.page.evaluate(() => {
+            const reserved = new Set([
+                'p',
+                'reel',
+                'reels',
+                'explore',
+                'accounts',
+                'stories',
+                'direct',
+                'tags',
+                'legal',
+                'about',
+                'developer',
+            ]);
+
+            const videos = Array.from(document.querySelectorAll('video'));
+            let bestVideo: HTMLVideoElement | null = null;
+            let bestArea = 0;
+
+            for (const video of videos) {
+                const rect = video.getBoundingClientRect();
+                if (rect.width < 120 || rect.height < 120) {
+                    continue;
+                }
+                if (rect.bottom < 0 || rect.top > window.innerHeight) {
+                    continue;
+                }
+                const area = rect.width * rect.height;
+                if (area > bestArea) {
+                    bestArea = area;
+                    bestVideo = video;
+                }
+            }
+
+            if (!bestVideo) {
+                return null;
+            }
+
+            let root: Element | null = bestVideo;
+            for (let depth = 0; depth < 14 && root; depth++) {
+                if (
+                    root.tagName === 'ARTICLE' ||
+                    root.getAttribute('role') === 'presentation' ||
+                    root.querySelector('a[href*="/reel/"], a[href*="/p/"]')
+                ) {
+                    break;
+                }
+                root = root.parentElement;
+            }
+            root = root ?? bestVideo.parentElement ?? bestVideo;
+
+            let shortcode: string | null = null;
+            let authorUsername: string | null = null;
+            const links = Array.from(root.querySelectorAll('a[href]'));
+
+            for (const link of links) {
+                const href = link.getAttribute('href') || '';
+                const mediaMatch = href.match(/\/(?:reel|p)\/([A-Za-z0-9_-]+)/i);
+                if (mediaMatch && !shortcode) {
+                    const candidate = mediaMatch[1];
+                    if (!reserved.has(candidate.toLowerCase()) && candidate.length >= 5) {
+                        shortcode = candidate;
+                    }
+                }
+
+                const profileMatch = href.match(/^\/([^/?#]+)\/?$/);
+                if (profileMatch) {
+                    const user = profileMatch[1];
+                    if (!reserved.has(user.toLowerCase()) && user.length >= 2) {
+                        authorUsername = user;
+                    }
+                }
+            }
+
+            if (!shortcode || !authorUsername) {
+                for (const link of Array.from(
+                    document.querySelectorAll('main a[href*="/reel/"], main a[href*="/p/"], main a[href^="/"]')
+                )) {
+                    const rect = link.getBoundingClientRect();
+                    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+                        continue;
+                    }
+
+                    const href = link.getAttribute('href') || '';
+                    const mediaMatch = href.match(/\/(?:reel|p)\/([A-Za-z0-9_-]+)/i);
+                    if (mediaMatch && !shortcode) {
+                        const candidate = mediaMatch[1];
+                        if (!reserved.has(candidate.toLowerCase()) && candidate.length >= 5) {
+                            shortcode = candidate;
+                        }
+                    }
+
+                    const profileMatch = href.match(/^\/([^/?#]+)\/?(?:\?.*)?$/);
+                    if (profileMatch && !authorUsername) {
+                        const user = profileMatch[1];
+                        if (!reserved.has(user.toLowerCase()) && user.length >= 2) {
+                            authorUsername = user;
+                        }
+                    }
+                }
+            }
+
+            if (!authorUsername) {
+                for (const img of Array.from(document.querySelectorAll('main img[alt]'))) {
+                    const rect = img.getBoundingClientRect();
+                    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+                        continue;
+                    }
+                    const alt = img.getAttribute('alt') || '';
+                    const profileMatch = alt.match(/^@?([a-zA-Z0-9._]+)'s profile picture$/i);
+                    if (profileMatch) {
+                        authorUsername = profileMatch[1];
+                        break;
+                    }
+                }
+            }
+
+            const captionCandidates: string[] = [];
+            for (const span of Array.from(root.querySelectorAll('span[dir="auto"], h1'))) {
+                const text = (span.textContent || '').replace(/\s+/g, ' ').trim();
+                if (text.length < 8) {
+                    continue;
+                }
+                if (/^(more|less|follow|following|like|comment|share|save)$/i.test(text)) {
+                    continue;
+                }
+                if (authorUsername && text.replace(/^@/, '').toLowerCase() === authorUsername.toLowerCase()) {
+                    continue;
+                }
+                captionCandidates.push(text);
+            }
+
+            captionCandidates.sort((a, b) => b.length - a.length);
+
+            return {
+                shortcode,
+                authorUsername,
+                caption: captionCandidates[0] || '',
+            };
+        }).then(async result => {
+            if (result?.shortcode) {
+                return result;
+            }
+
+            const fromUrl = this.parseShortcodeFromHref(this.page.url());
+            if (!fromUrl || !result) {
+                return result;
+            }
+
+            return { ...result, shortcode: fromUrl };
+        });
+    }
+
+    private async waitForReelUrlShortcode(timeoutMs = 4000): Promise<string | null> {
+        try {
+            await this.page.waitForURL(/\/(reel|p)\/[A-Za-z0-9_-]{5,}/i, { timeout: timeoutMs });
+        } catch {
+            /* URL may stay on /reels/ — DOM fallback handles that */
+        }
+        return this.parseShortcodeFromHref(this.page.url());
+    }
+
+    private async getActiveReelsFeedRoot(): Promise<Locator> {
+        const sectionWithVideo = this.page.locator('main section').filter({
+            has: this.page.locator('video'),
+        });
+        if ((await sectionWithVideo.count()) > 0) {
+            return sectionWithVideo.first();
+        }
+
+        const articleWithVideo = this.page.locator('main article').filter({
+            has: this.page.locator('video'),
+        });
+        if ((await articleWithVideo.count()) > 0) {
+            return articleWithVideo.first();
+        }
+
+        return this.page.locator('main').first();
+    }
+
+    private async extractAuthorFromArticle(article: Locator): Promise<string | null> {
+        const authorLocators = [
+            article.locator('header a[href^="/"]'),
+            article.locator('a[href^="/"][role="link"]'),
+            article.locator('span a[href^="/"]'),
+            article.locator('a[href^="/"]'),
+        ];
+
+        for (const locator of authorLocators) {
+            const count = await locator.count();
+            for (let i = 0; i < Math.min(count, 6); i++) {
+                const href = await this.getAttributeSafe(locator.nth(i), 'href', 1500);
+                const username = this.parseProfileHref(href);
+                if (username) {
+                    return username;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private getWatchItemDelayMs(config: FeedBrowseConfig): number {
+        const { min, max } = config.watchItemSeconds;
+        return (min + Math.random() * Math.max(0, max - min)) * 1000;
+    }
+
+    private feedBrowseLimitsReached(config: FeedBrowseConfig, state: FeedBrowseRunState): boolean {
+        return (
+            state.itemsScanned >= config.maxItemsToScan ||
+            state.commentsPosted >= config.maxCommentsPerRun
+        );
+    }
+
+    public async openReelsFeed(): Promise<void> {
+        this.logger.action('Opening Reels feed...');
+        this.capturedVideoUrl = undefined;
+        this.isCapturingVideo = true;
+        await this.page.goto('https://www.instagram.com/reels/', {
+            waitUntil: 'domcontentloaded',
+            timeout: 30000,
+        });
+        await this.humanBehavior.randomizedWait(this.behavior.navigationWaitMs);
+        await this.dismissCommonPopups();
+        await this.page
+            .locator('video')
+            .first()
+            .waitFor({ state: 'visible', timeout: 20000 })
+            .catch(() => {});
+        await this.humanBehavior.randomDelay(1500, 3000);
+        this.logger.success('Reels feed loaded.');
+    }
+
+    public async openHomeFeed(): Promise<void> {
+        this.logger.action('Opening home feed...');
+        this.capturedVideoUrl = undefined;
+        this.isCapturingVideo = true;
+        await this.page.goto('https://www.instagram.com/?hl=en', {
+            waitUntil: 'domcontentloaded',
+            timeout: 30000,
+        });
+        await this.humanBehavior.randomizedWait(this.behavior.navigationWaitMs);
+        await this.dismissCommonPopups();
+        await this.page
+            .locator('main article')
+            .first()
+            .waitFor({ state: 'visible', timeout: 20000 })
+            .catch(() => {});
+        this.logger.success('Home feed loaded.');
+    }
+
+    private async resolveVisibleReelShortcode(): Promise<string | null> {
+        const fromUrl = this.parseShortcodeFromHref(this.page.url());
+        if (fromUrl) {
+            return fromUrl;
+        }
+
+        const fromDom = await this.extractReelsFeedItemFromDom();
+        if (fromDom?.shortcode) {
+            return fromDom.shortcode;
+        }
+
+        const reelLinkSelectors = [
+            'main a[href*="/reel/"]',
+            'main a[href*="/p/"]',
+            'a[href*="/reel/"]',
+            'a[href*="/p/"]',
+        ];
+
+        for (const selector of reelLinkSelectors) {
+            const links = this.page.locator(selector);
+            const count = await links.count();
+            for (let i = 0; i < Math.min(count, 12); i++) {
+                const href = await this.getAttributeSafe(links.nth(i), 'href', 1000);
+                const shortcode = this.parseShortcodeFromHref(href);
+                if (shortcode) {
+                    return shortcode;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private async resolveCurrentReelShortcodeOnFeed(): Promise<string | null> {
+        await this.waitForReelUrlShortcode(2000);
+
+        const domItem = await this.extractReelsFeedItemFromDom();
+        if (domItem?.shortcode) {
+            return domItem.shortcode;
+        }
+
+        return this.resolveVisibleReelShortcode();
+    }
+
+    private async buildFeedItemContextFromPostPage(
+        postUrl: string,
+        shortcode: string,
+        isReel: boolean
+    ): Promise<FeedItemContext | null> {
+        this.capturedVideoUrl = undefined;
+        const navigateUrl = this.resolveCommentNavigationUrl(postUrl);
+        this.logger.action(`Opening ${isReel ? 'reel' : 'post'} ${shortcode} for context...`);
+
+        try {
+            await this.page.goto(navigateUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await this.humanBehavior.randomizedWait(this.behavior.shortWaitMs);
+            await this.dismissCommonPopups();
+            await this.waitForPostLoaded();
+
+            if (!(await this.hasLoadablePostContent())) {
+                this.logger.warn(`Could not load content for ${shortcode}.`);
+                return null;
+            }
+
+            const authorUsername = await this.extractPostAuthorUsername();
+            if (!authorUsername) {
+                this.logger.warn(`Reel ${shortcode}: author not found on post page.`);
+                return null;
+            }
+
+            const postRoot = await this.getPostRootLocator();
+            const caption = await this.extractPostCaption(postRoot);
+            const { postImageUrl, postVideoUrl } = await this.extractPostMediaFromRoot(postRoot, isReel);
+
+            return {
+                authorUsername,
+                caption,
+                shortcode,
+                postUrl,
+                postImageUrl,
+                postVideoUrl: postVideoUrl ?? this.capturedVideoUrl,
+                isReel,
+                contentType: isReel ? 'reel' : 'post',
+            };
+        } catch (error: unknown) {
+            const msg = error instanceof Error ? error.message : String(error);
+            this.logger.warn(`Failed to open ${shortcode}: ${msg}`);
+            return null;
+        }
+    }
+
+    private async returnToReelsFeed(): Promise<void> {
+        if (this.isReelsFeedUrl()) {
+            return;
+        }
+
+        await this.page.goto('https://www.instagram.com/reels/', {
+            waitUntil: 'domcontentloaded',
+            timeout: 30000,
+        });
+        await this.humanBehavior.randomizedWait(this.behavior.shortWaitMs);
+        await this.dismissCommonPopups();
+        await this.page
+            .locator('video')
+            .first()
+            .waitFor({ state: 'visible', timeout: 15000 })
+            .catch(() => {});
+        await this.humanBehavior.randomDelay(1000, 2000);
+    }
+
+    private async extractCurrentReelContext(): Promise<FeedItemContext | null> {
+        const shortcode = await this.resolveCurrentReelShortcodeOnFeed();
+        if (!shortcode) {
+            this.logger.info('Reel shortcode not found in URL or DOM.');
+            return null;
+        }
+
+        const postUrl = `https://www.instagram.com/reel/${shortcode}/`;
+        return this.buildFeedItemContextFromPostPage(postUrl, shortcode, true);
+    }
+
+    private async collectVisibleHomeFeedLinks(): Promise<Array<{ shortcode: string; postUrl: string; isReel: boolean }>> {
+        const links = await this.page.evaluate(() => {
+            const reserved = new Set(['reels', 'reel', 'p', 'explore', 'accounts', 'stories', 'direct']);
+            const seen = new Set<string>();
+            const results: Array<{ shortcode: string; postUrl: string; isReel: boolean }> = [];
+            const viewportPad = 240;
+
+            const anchors = Array.from(
+                document.querySelectorAll(
+                    'article a[href*="/p/"], article a[href*="/reel/"], main a[href*="/p/"], main a[href*="/reel/"]'
+                )
+            );
+
+            for (const anchor of anchors) {
+                const rect = anchor.getBoundingClientRect();
+                if (rect.bottom < -viewportPad || rect.top > window.innerHeight + viewportPad) {
+                    continue;
+                }
+
+                const href = anchor.getAttribute('href') || '';
+                const match = href.match(/\/(p|reel)\/([A-Za-z0-9_-]+)/i);
+                if (!match) {
+                    continue;
+                }
+
+                const shortcode = match[2];
+                if (reserved.has(shortcode.toLowerCase()) || shortcode.length < 5 || seen.has(shortcode)) {
+                    continue;
+                }
+
+                seen.add(shortcode);
+                results.push({
+                    shortcode,
+                    postUrl: href.startsWith('http') ? href : `https://www.instagram.com${href}`,
+                    isReel: match[1].toLowerCase() === 'reel',
+                });
+            }
+
+            return results;
+        });
+
+        return links;
+    }
+
+    private async extractCaptionFromArticle(article: Locator): Promise<string> {
+        const spans = article.locator('span[dir="auto"]');
+        const count = await spans.count();
+        const candidates: string[] = [];
+
+        for (let i = 0; i < Math.min(count, 15); i++) {
+            const text = (await spans.nth(i).textContent())?.replace(/\s+/g, ' ').trim() ?? '';
+            if (text.length < 8) continue;
+            if (/^(more|less|follow|following|like|comment|share|save)$/i.test(text)) continue;
+            if (this.looksLikeUsernameOnly(text) && text.length < 18) continue;
+            candidates.push(text);
+        }
+
+        if (candidates.length === 0) {
+            return '';
+        }
+
+        const unique = [...new Set(candidates)];
+        unique.sort((a, b) => b.length - a.length);
+        return unique[0];
+    }
+
+    private async extractHomeFeedItemContext(article: Locator): Promise<FeedItemContext | null> {
+        try {
+            const postLink = article.locator('a[href*="/p/"], a[href*="/reel/"]').first();
+            if ((await postLink.count()) === 0) {
+                return null;
+            }
+
+            const href = await this.getAttributeSafe(postLink, 'href', 2000);
+            if (!href) {
+                return null;
+            }
+
+            const postUrl = this.normalizePostUrl(href);
+            const shortcode = this.parseShortcodeFromHref(postUrl);
+            if (!shortcode) {
+                return null;
+            }
+
+            const authorUsername = await this.extractAuthorFromArticle(article);
+            if (!authorUsername) {
+                return null;
+            }
+
+            const isReel = /\/reel\//i.test(postUrl);
+            const caption = await this.extractCaptionFromArticle(article);
+
+            let postImageUrl: string | undefined;
+            const image = article.locator('img[src*="cdninstagram"], img[src*="instagram"]').first();
+            const src = await this.getAttributeSafe(image, 'src', 1500);
+            if (src && !src.includes('static') && !src.includes('sprite')) {
+                postImageUrl = src;
+            }
+
+            return {
+                authorUsername,
+                caption,
+                shortcode,
+                postUrl,
+                postImageUrl,
+                isReel,
+                contentType: isReel ? 'reel' : 'post',
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    private async processFeedItem(
+        context: FeedItemContext,
+        config: FeedBrowseConfig,
+        aiPromptHint?: string
+    ): Promise<InteractionResult> {
+        if (this.commentHistory.hasCommented(this.config.username, context.shortcode)) {
+            this.logger.warn(`Already commented on ${context.shortcode}. Skipping.`);
+            return 'SKIPPED';
+        }
+
+        const hasContext = hasActionablePostContext(
+            context.caption,
+            context.postImageUrl,
+            context.postVideoUrl,
+            this.aiGenerator.supportsVideoAnalysis(),
+            context.isReel || Boolean(context.postVideoUrl)
+        );
+
+        if (!hasContext) {
+            this.logger.info(`Skipping ${context.shortcode} — not enough caption/media context.`);
+            return 'SKIPPED';
+        }
+
+        if (!this.channelSkillsContext?.trim()) {
+            this.logger.warn('No skills/style guide configured — skipping feed item.');
+            return 'SKIPPED';
+        }
+
+        this.logger.action('Assessing skills relevance...');
+        const assessment = await this.aiGenerator.assessSkillsRelevance(
+            context.caption,
+            this.channelSkillsContext,
+            {
+                imageUrl: context.postImageUrl,
+                videoUrl: context.postVideoUrl,
+                authorUsername: context.authorUsername,
+            }
+        );
+
+        this.logger.info(
+            `Relevance score ${assessment.score.toFixed(2)} — ${assessment.reason}`
+        );
+
+        if (!isSkillsRelevanceMatch(assessment, config.minRelevanceScore)) {
+            this.logger.info(
+                `Skipping @${context.authorUsername} ${context.shortcode} — below relevance threshold (${config.minRelevanceScore}).`
+            );
+            return 'SKIPPED';
+        }
+
+        const postRoot = await this.getPostRootLocator();
+        const finalComment = await this.buildCommentForPost(
+            context.authorUsername,
+            aiPromptHint,
+            context.caption,
+            context.postImageUrl,
+            context.postVideoUrl,
+            context.isReel
+        );
+
+        return this.submitTopLevelComment(postRoot, finalComment, context.shortcode, context.isReel);
+    }
+
+    private async scrollToNextReel(previousShortcode: string | null): Promise<boolean> {
+        const before = previousShortcode ?? (await this.resolveVisibleReelShortcode());
+        const videoUrlBefore = this.capturedVideoUrl;
+        this.capturedVideoUrl = undefined;
+
+        const video = this.page.locator('main video').first();
+        if ((await video.count()) > 0) {
+            await video.hover({ timeout: 3000 }).catch(() => {});
+        }
+
+        await this.page.keyboard.press('ArrowDown');
+        await this.humanBehavior.randomDelay(800, 1500);
+
+        if ((await video.count()) > 0) {
+            await this.page.mouse.wheel(0, 900);
+            await this.humanBehavior.randomDelay(800, 1500);
+        }
+
+        const deadline = Date.now() + 12000;
+        while (Date.now() < deadline) {
+            const now = await this.resolveVisibleReelShortcode();
+            if (now && now !== before) {
+                return true;
+            }
+            if (
+                this.capturedVideoUrl &&
+                this.capturedVideoUrl !== videoUrlBefore
+            ) {
+                return true;
+            }
+            await this.humanBehavior.randomDelay(400, 800);
+        }
+
+        return false;
+    }
+
+    private async closePostDialogIfOpen(): Promise<void> {
+        const dialog = this.page.locator('div[role="dialog"]');
+        if ((await dialog.count()) > 0 && (await dialog.first().isVisible().catch(() => false))) {
+            await this.page.keyboard.press('Escape');
+            await this.humanBehavior.randomDelay(500, 1200);
+        }
+    }
+
+    private async openHomeFeedPost(context: FeedItemContext): Promise<boolean> {
+        this.capturedVideoUrl = undefined;
+        const navigateUrl = this.resolveCommentNavigationUrl(context.postUrl);
+        this.logger.action(`Opening feed post ${navigateUrl}...`);
+
+        try {
+            await this.page.goto(navigateUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await this.humanBehavior.randomizedWait(this.behavior.shortWaitMs);
+            await this.dismissCommonPopups();
+            await this.waitForPostLoaded();
+
+            if (!(await this.hasLoadablePostContent())) {
+                return false;
+            }
+
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    public async runFeedBrowseReels(
+        config: FeedBrowseConfig,
+        aiPromptHint: string | undefined,
+        callbacks: FeedBrowseCallbacks,
+        state: FeedBrowseRunState
+    ): Promise<void> {
+        await this.openReelsFeed();
+
+        const seenShortcodes = new Set<string>();
+        let stagnantScrolls = 0;
+        let lastShortcode: string | null = null;
+
+        while (!this.feedBrowseLimitsReached(config, state) && !callbacks.shouldStop?.()) {
+            await this.humanBehavior.randomDelay(
+                config.watchItemSeconds.min * 1000,
+                config.watchItemSeconds.max * 1000
+            );
+
+            const shortcode = await this.resolveCurrentReelShortcodeOnFeed();
+            if (!shortcode) {
+                stagnantScrolls++;
+                this.logger.warn('Could not read current reel shortcode.');
+                if (stagnantScrolls >= 4) {
+                    this.logger.warn('Reels feed scroll stalled — stopping reels browse.');
+                    break;
+                }
+                const advanced = await this.scrollToNextReel(lastShortcode);
+                if (!advanced) stagnantScrolls++;
+                continue;
+            }
+
+            if (seenShortcodes.has(shortcode) && shortcode === lastShortcode) {
+                stagnantScrolls++;
+                if (stagnantScrolls >= 4) {
+                    this.logger.warn('Reels feed stopped advancing — ending reels browse.');
+                    break;
+                }
+                await this.scrollToNextReel(shortcode);
+                continue;
+            }
+
+            const postUrl = `https://www.instagram.com/reel/${shortcode}/`;
+            const context = await this.buildFeedItemContextFromPostPage(postUrl, shortcode, true);
+            if (!context) {
+                stagnantScrolls++;
+                this.logger.warn(`Could not load reel page for ${shortcode}.`);
+                if (stagnantScrolls >= 4) {
+                    this.logger.warn('Reels feed scroll stalled — stopping reels browse.');
+                    break;
+                }
+                await this.returnToReelsFeed();
+                await this.scrollToNextReel(shortcode);
+                continue;
+            }
+
+            stagnantScrolls = 0;
+            seenShortcodes.add(shortcode);
+            lastShortcode = shortcode;
+            state.itemsScanned++;
+
+            this.logger.header(
+                `Reels item ${state.itemsScanned}/${config.maxItemsToScan}: @${context.authorUsername} (${context.shortcode})`
+            );
+
+            const result = await this.processFeedItem(context, config, aiPromptHint);
+            callbacks.onItemComplete?.(context, result);
+            if (result === 'SUCCESS') {
+                state.commentsPosted++;
+                const waitMs = this.getRandomActionDelayMs();
+                this.logger.info(`Waiting ~${Math.round(waitMs / 1000)}s before next reel...`);
+                await this.humanBehavior.randomDelay(waitMs, waitMs + 500);
+            }
+
+            await this.returnToReelsFeed();
+
+            if (this.feedBrowseLimitsReached(config, state) || callbacks.shouldStop?.()) {
+                break;
+            }
+
+            const advanced = await this.scrollToNextReel(context.shortcode);
+            if (!advanced) {
+                stagnantScrolls++;
+                if (stagnantScrolls >= 4) break;
+            }
+        }
+    }
+
+    public async runFeedBrowseHome(
+        config: FeedBrowseConfig,
+        aiPromptHint: string | undefined,
+        callbacks: FeedBrowseCallbacks,
+        state: FeedBrowseRunState
+    ): Promise<void> {
+        await this.openHomeFeed();
+
+        const seenShortcodes = new Set<string>();
+        let stagnantScrolls = 0;
+
+        while (!this.feedBrowseLimitsReached(config, state) && !callbacks.shouldStop?.()) {
+            const visibleLinks = await this.collectVisibleHomeFeedLinks();
+            if (visibleLinks.length === 0) {
+                this.logger.info('No home feed posts visible in viewport — scrolling...');
+            }
+            let processedThisPass = false;
+
+            for (const link of visibleLinks) {
+                if (this.feedBrowseLimitsReached(config, state) || callbacks.shouldStop?.()) {
+                    break;
+                }
+
+                if (seenShortcodes.has(link.shortcode)) {
+                    continue;
+                }
+
+                try {
+                    seenShortcodes.add(link.shortcode);
+                    state.itemsScanned++;
+                    processedThisPass = true;
+                    stagnantScrolls = 0;
+
+                    const postUrl = this.normalizePostUrl(link.postUrl);
+                    const context = await this.buildFeedItemContextFromPostPage(
+                        postUrl,
+                        link.shortcode,
+                        link.isReel
+                    );
+                    if (!context) {
+                        state.itemsScanned = Math.max(0, state.itemsScanned - 1);
+                        seenShortcodes.delete(link.shortcode);
+                        continue;
+                    }
+
+                    this.logger.header(
+                        `Home item ${state.itemsScanned}/${config.maxItemsToScan}: @${context.authorUsername} (${context.shortcode})`
+                    );
+
+                    await this.humanBehavior.randomDelay(
+                        config.watchItemSeconds.min * 1000,
+                        config.watchItemSeconds.max * 1000
+                    );
+
+                    const result = await this.processFeedItem(context, config, aiPromptHint);
+                    callbacks.onItemComplete?.(context, result);
+                    if (result === 'SUCCESS') {
+                        state.commentsPosted++;
+                        const waitMs = this.getRandomActionDelayMs();
+                        this.logger.info(`Waiting ~${Math.round(waitMs / 1000)}s before next feed post...`);
+                        await this.humanBehavior.randomDelay(waitMs, waitMs + 500);
+                    }
+
+                    await this.page.goto('https://www.instagram.com/?hl=en', {
+                        waitUntil: 'domcontentloaded',
+                    });
+                    await this.humanBehavior.randomizedWait(this.behavior.shortWaitMs);
+                    await this.dismissCommonPopups();
+
+                    if (this.feedBrowseLimitsReached(config, state)) {
+                        break;
+                    }
+                } catch (error: unknown) {
+                    const msg = error instanceof Error ? error.message : String(error);
+                    this.logger.warn(`Home feed post ${link.shortcode} skipped: ${msg}`);
+                    continue;
+                }
+            }
+
+            if (this.feedBrowseLimitsReached(config, state) || callbacks.shouldStop?.()) {
+                break;
+            }
+
+            if (!processedThisPass) {
+                stagnantScrolls++;
+                if (stagnantScrolls >= 4) {
+                    this.logger.warn('Home feed scroll stalled — ending home browse.');
+                    break;
+                }
+            }
+
+            await this.page.evaluate(() => window.scrollBy(0, window.innerHeight * 0.9));
+            await this.humanBehavior.randomDelay(1000, 2200);
         }
     }
 }

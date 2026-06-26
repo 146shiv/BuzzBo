@@ -30,5 +30,22 @@ class RemoteAICommentGenerator {
         });
         return result.comment;
     }
+    async assessSkillsRelevance(postText, skillsContext, options) {
+        let imageData;
+        if (options?.imageUrl) {
+            const fetched = await (0, genai_1.fetchImageAsBase64ForComment)(options.imageUrl);
+            if (fetched) {
+                imageData = fetched;
+            }
+        }
+        return this.client.assessRelevance({
+            postText,
+            skillsContext,
+            authorUsername: options?.authorUsername,
+            imageUrl: options?.imageUrl,
+            videoUrl: options?.videoUrl,
+            imageData,
+        });
+    }
 }
 exports.RemoteAICommentGenerator = RemoteAICommentGenerator;

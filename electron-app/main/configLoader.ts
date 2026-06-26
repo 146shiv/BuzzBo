@@ -11,7 +11,21 @@ export interface LoadedConfig {
 
 export async function loadConfigFromApi(client: AdminApiClient): Promise<LoadedConfig> {
     const botConfig = await client.getBotConfig();
-    const settings = (botConfig.settings as SettingsConfig) ?? DEFAULT_SETTINGS;
+    const remoteSettings = (botConfig.settings as SettingsConfig) ?? {};
+    const settings: SettingsConfig = {
+        ...DEFAULT_SETTINGS,
+        ...remoteSettings,
+        feedBrowse: {
+            ...(DEFAULT_SETTINGS.feedBrowse ?? {
+                maxItemsToScan: 30,
+                maxCommentsPerRun: 5,
+                minRelevanceScore: 0.55,
+                watchItemSeconds: { min: 3, max: 8 },
+                surfaces: ['reels', 'home'],
+            }),
+            ...remoteSettings.feedBrowse,
+        },
+    };
     const enabledAccounts = (botConfig.accounts as AccountConfig[]) ?? [];
     const allAccounts = await client.listAccounts();
     return {

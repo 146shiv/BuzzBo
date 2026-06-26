@@ -1,6 +1,10 @@
 import type { AdminApiClient } from '../api/apiClient';
 import type { AiProvider } from '../config/types';
-import type { AICommentGeneratorAdapter, GenerateCommentOverrides } from './genai';
+import type {
+    AICommentGeneratorAdapter,
+    GenerateCommentOverrides,
+    SkillsRelevanceAssessment,
+} from './genai';
 import { fetchImageAsBase64ForComment } from './genai';
 
 export interface RemoteAICommentGeneratorOptions {
@@ -46,5 +50,32 @@ export class RemoteAICommentGenerator implements AICommentGeneratorAdapter {
             imageData,
         });
         return result.comment;
+    }
+
+    async assessSkillsRelevance(
+        postText: string,
+        skillsContext: string,
+        options?: {
+            imageUrl?: string;
+            videoUrl?: string;
+            authorUsername?: string;
+        }
+    ): Promise<SkillsRelevanceAssessment> {
+        let imageData: { data: string; mimeType: string } | undefined;
+        if (options?.imageUrl) {
+            const fetched = await fetchImageAsBase64ForComment(options.imageUrl);
+            if (fetched) {
+                imageData = fetched;
+            }
+        }
+
+        return this.client.assessRelevance({
+            postText,
+            skillsContext,
+            authorUsername: options?.authorUsername,
+            imageUrl: options?.imageUrl,
+            videoUrl: options?.videoUrl,
+            imageData,
+        });
     }
 }

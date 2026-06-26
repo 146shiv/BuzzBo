@@ -51,4 +51,11 @@ exports.DEFAULT_SETTINGS = {
             commentWeight: 2,
         },
     },
+    feedBrowse: {
+        maxItemsToScan: 30,
+        maxCommentsPerRun: 5,
+        minRelevanceScore: 0.55,
+        watchItemSeconds: { min: 3, max: 8 },
+        surfaces: ['reels', 'home'],
+    },
 };

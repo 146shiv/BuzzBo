@@ -53,13 +53,28 @@ export interface AccountHashtagSearchOverride {
     api_search?: Partial<ApiHashtagSearchConfig>;
 }
 
+export type FeedBrowseSurface = 'reels' | 'home';
+
+export interface FeedBrowseConfig {
+    maxItemsToScan: number;
+    maxCommentsPerRun: number;
+    minRelevanceScore: number;
+    watchItemSeconds: { min: number; max: number };
+    surfaces: FeedBrowseSurface[];
+}
+
+export interface AccountFeedBrowseOverride {
+    feedBrowse?: Partial<FeedBrowseConfig>;
+}
+
 export type LoginMethod = 'credentials' | 'manual';
 export type MentionPolicy = 'ai_only' | 'append_if_missing' | 'always';
 export type PostSourceMode =
     | 'new_post_added_to_account'
     | 'url_list'
     | 'hashtag_list'
-    | 'hashtag_api';
+    | 'hashtag_api'
+    | 'feed_browse';
 export type AiProvider = 'gemini' | 'groq' | 'local';
 export type BrowserChannel = 'chrome' | 'chromium' | 'msedge';
 
@@ -78,6 +93,7 @@ export interface AccountConfig {
     postUrlsFile?: string;
     hashtags?: string[];
     hashtagSearch?: AccountHashtagSearchOverride;
+    feedBrowse?: AccountFeedBrowseOverride['feedBrowse'];
     instagramApiAccessToken?: string;
     instagramApiUserId?: string;
     aiPromptHint?: string;
@@ -113,6 +129,7 @@ export interface SettingsConfig {
     defaultActionDelaySeconds: ActionDelayConfig;
     monitoringIntervalSeconds: ActionDelayConfig;
     hashtagSearch: HashtagSearchConfig;
+    feedBrowse: FeedBrowseConfig;
 }
 
 export interface Config {
@@ -159,5 +176,12 @@ export const DEFAULT_SETTINGS: SettingsConfig = {
             likeWeight: 1,
             commentWeight: 2,
         },
+    },
+    feedBrowse: {
+        maxItemsToScan: 30,
+        maxCommentsPerRun: 5,
+        minRelevanceScore: 0.55,
+        watchItemSeconds: { min: 3, max: 8 },
+        surfaces: ['reels', 'home'],
     },
 };

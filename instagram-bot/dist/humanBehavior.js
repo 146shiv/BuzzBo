@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.HumanBehavior = void 0;
+const textEncoding_1 = require("./textEncoding");
 class HumanBehavior {
     constructor(page, developerMode, pauseState, logger) {
         this.page = page;
@@ -52,22 +53,123 @@ class HumanBehavior {
             await this.page.keyboard.insertText(text);
             return;
         }
+        await this.typeAsciiWithKeyboard(text, options);
+    }
+    /**
+     * Type into Instagram's contenteditable comment box.
+     * ASCII uses keyboard events; emoji/Unicode uses DOM insert (CDP insertText corrupts in Lexical).
+     */
+    async typeTextInField(element, text, options = { min: 100, max: 350, typoChance: 0.05 }) {
+        await this.checkForPause();
+        await element.focus();
+        if (this.developerMode) {
+            await this.insertTextIntoEditable(element, text);
+            return;
+        }
+        const runs = (0, textEncoding_1.splitIntoTypingRuns)(text);
         const adjustedMin = options.min * this.sessionVariations.typingSpeedMultiplier;
         const adjustedMax = options.max * this.sessionVariations.typingSpeedMultiplier;
-        for (let i = 0; i < text.length; i++) {
-            const char = text[i];
+        for (const run of runs) {
+            await element.focus();
+            if (run.kind === 'unicode') {
+                await this.insertTextIntoEditable(element, run.text);
+                await this.page.waitForTimeout(adjustedMin + Math.random() * (adjustedMax - adjustedMin));
+                continue;
+            }
+            await this.typeAsciiWithKeyboard(run.text, options);
+        }
+    }
+    /** Insert Unicode into a contenteditable via browser DOM APIs (reliable for Instagram Lexical). */
+    async insertTextIntoEditable(element, text) {
+        await element.click();
+        const inserted = await element.evaluate((el, insertText) => {
+            const resolveTarget = () => {
+                const root = el;
+                const active = document.activeElement;
+                if (active instanceof HTMLElement && root.contains(active) && active.isContentEditable) {
+                    return active;
+                }
+                const nested = root.querySelector('[contenteditable="true"][role="textbox"], [contenteditable="true"]');
+                return nested ?? root;
+            };
+            const target = resolveTarget();
+            target.focus();
+            const selection = window.getSelection();
+            if (!selection) {
+                return false;
+            }
+            if (selection.rangeCount === 0) {
+                const initialRange = document.createRange();
+                initialRange.selectNodeContents(target);
+                initialRange.collapse(false);
+                selection.addRange(initialRange);
+            }
+            if (document.execCommand('insertText', false, insertText)) {
+                target.dispatchEvent(new Event('input', { bubbles: true }));
+                return true;
+            }
+            try {
+                const range = selection.getRangeAt(0);
+                range.deleteContents();
+                const textNode = document.createTextNode(insertText);
+                range.insertNode(textNode);
+                range.setStartAfter(textNode);
+                range.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                target.dispatchEvent(new InputEvent('input', {
+                    bubbles: true,
+                    cancelable: false,
+                    inputType: 'insertText',
+                    data: insertText,
+                }));
+                return true;
+            }
+            catch {
+                return false;
+            }
+        }, text);
+        if (!inserted) {
+            await this.pasteTextIntoEditable(element, text);
+        }
+    }
+    async pasteTextIntoEditable(element, text) {
+        await element.focus();
+        const origin = (() => {
+            try {
+                return new URL(this.page.url()).origin;
+            }
+            catch {
+                return 'https://www.instagram.com';
+            }
+        })();
+        await this.page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin }).catch(() => { });
+        await this.page.evaluate(async (value) => {
+            await navigator.clipboard.writeText(value);
+        }, text);
+        const pasteShortcut = process.platform === 'darwin' ? 'Meta+V' : 'Control+V';
+        await this.page.keyboard.press(pasteShortcut);
+        await this.randomDelay(150, 400);
+    }
+    async typeAsciiWithKeyboard(text, options = { min: 100, max: 350, typoChance: 0.05 }) {
+        const adjustedMin = options.min * this.sessionVariations.typingSpeedMultiplier;
+        const adjustedMax = options.max * this.sessionVariations.typingSpeedMultiplier;
+        const graphemes = (0, textEncoding_1.splitGraphemes)(text);
+        for (let i = 0; i < graphemes.length; i++) {
+            const grapheme = graphemes[i];
             const typoChance = (options.typoChance || 0.05) * (1 + Math.random() * 0.5);
-            if (Math.random() < typoChance && i < text.length - 1) {
+            const canSimulateTypo = (0, textEncoding_1.needsKeyboardType)(grapheme);
+            if (canSimulateTypo && Math.random() < typoChance && i < graphemes.length - 1) {
                 const typoTypes = ['adjacent', 'double', 'wrong'];
                 const typoType = typoTypes[Math.floor(Math.random() * typoTypes.length)];
                 if (typoType === 'double') {
-                    await this.page.keyboard.type(char);
+                    await this.page.keyboard.type(grapheme);
                     await this.randomDelay(100, 300);
                     await this.page.keyboard.press('Backspace');
                     await this.randomDelay(150, 400);
                 }
                 else {
-                    let typoChar = char;
+                    let typoChar = grapheme;
                     if (typoType === 'adjacent') {
                         const adjacent = {
                             a: 's',
@@ -79,7 +181,7 @@ class HumanBehavior {
                             t: 'y',
                             y: 't',
                         };
-                        typoChar = adjacent[char.toLowerCase()] || 'x';
+                        typoChar = adjacent[grapheme.toLowerCase()] || 'x';
                     }
                     else {
                         typoChar = 'qwertyuiopasdfghjklzxcvbnm'[Math.floor(Math.random() * 26)];
@@ -90,11 +192,14 @@ class HumanBehavior {
                     await this.randomDelay(150, 400);
                 }
             }
-            await this.page.keyboard.type(char);
+            if (!(0, textEncoding_1.needsKeyboardType)(grapheme)) {
+                continue;
+            }
+            await this.page.keyboard.type(grapheme);
             let delay = adjustedMin + Math.random() * (adjustedMax - adjustedMin);
-            if (char === ' ')
+            if (grapheme === ' ')
                 delay *= 1.5;
-            if ('.!?'.includes(char))
+            if ('.!?'.includes(grapheme))
                 delay *= 2;
             if (i === 0)
                 delay *= 1.3;

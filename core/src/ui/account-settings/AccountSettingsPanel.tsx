@@ -2,6 +2,7 @@
 
 import {
     BOOL_ENABLED,
+    FEED_BROWSE_SURFACE_OPTIONS,
     LOGIN_METHOD_OPTIONS,
     MENTION_POLICY_OPTIONS,
     SOURCE_MODE_OPTIONS,
@@ -25,6 +26,21 @@ export function AccountSettingsPanel({
     const enabled = Boolean(account.enabled);
     const loginMethod = String(config.loginMethod || 'manual');
     const sourceMode = String(config.sourceMode || 'hashtag_list');
+
+    const feedBrowseDraft = (config.feedBrowse as Record<string, unknown>) || {};
+    const feedBrowseSurfaces =
+        (Array.isArray(feedBrowseDraft.surfaces) && feedBrowseDraft.surfaces.length > 0
+            ? feedBrowseDraft.surfaces
+            : ['reels', 'home']) as string[];
+
+    const patchFeedBrowse = (partial: Record<string, unknown>) =>
+        patchConfig({
+            feedBrowse: {
+                surfaces: feedBrowseSurfaces,
+                ...feedBrowseDraft,
+                ...partial,
+            },
+        });
 
     switch (group) {
         case 'general':
@@ -76,7 +92,21 @@ export function AccountSettingsPanel({
                         <LabeledSelect
                             options={SOURCE_MODE_OPTIONS}
                             value={sourceMode}
-                            onValueChange={v => patchConfig({ sourceMode: v })}
+                            onValueChange={v => {
+                                if (v === 'feed_browse') {
+                                    patchConfig({
+                                        sourceMode: v,
+                                        feedBrowse: {
+                                            surfaces: feedBrowseSurfaces,
+                                            maxItemsToScan: Number(feedBrowseDraft.maxItemsToScan ?? 30),
+                                            maxCommentsPerRun: Number(feedBrowseDraft.maxCommentsPerRun ?? 5),
+                                            minRelevanceScore: Number(feedBrowseDraft.minRelevanceScore ?? 0.55),
+                                        },
+                                    });
+                                } else {
+                                    patchConfig({ sourceMode: v });
+                                }
+                            }}
                         />
                     </Field>
                     {sourceMode === 'hashtag_list' && (
@@ -144,6 +174,63 @@ export function AccountSettingsPanel({
                                 }
                             />
                         </Field>
+                    )}
+                    {sourceMode === 'feed_browse' && (
+                        <>
+                            <Field
+                                label="Browse surfaces"
+                                hint="Reels tab scrolls /reels/; Home feed scrolls the main timeline. Use Chrome browser channel for reel video."
+                            >
+                                <div className="flex flex-wrap gap-3">
+                                    {FEED_BROWSE_SURFACE_OPTIONS.map(opt => {
+                                        const checked = feedBrowseSurfaces.includes(opt.value);
+                                        return (
+                                            <label key={opt.value} className="flex items-center gap-2 text-sm">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={e => {
+                                                        const next = e.target.checked
+                                                            ? [...new Set([...feedBrowseSurfaces, opt.value])]
+                                                            : feedBrowseSurfaces.filter(s => s !== opt.value);
+                                                        patchFeedBrowse({
+                                                            surfaces: next.length ? next : ['reels'],
+                                                        });
+                                                    }}
+                                                />
+                                                {opt.label}
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            </Field>
+                            <Field label="Max items to scan (override)">
+                                <NumberInput
+                                    value={Number(
+                                        (config.feedBrowse as { maxItemsToScan?: number })?.maxItemsToScan ?? 30
+                                    )}
+                                    onChange={v => patchFeedBrowse({ maxItemsToScan: v })}
+                                />
+                            </Field>
+                            <Field label="Max comments per run (override)">
+                                <NumberInput
+                                    value={Number(
+                                        (config.feedBrowse as { maxCommentsPerRun?: number })?.maxCommentsPerRun ??
+                                            5
+                                    )}
+                                    onChange={v => patchFeedBrowse({ maxCommentsPerRun: v })}
+                                />
+                            </Field>
+                            <Field label="Min relevance score (0–1, override)" hint="Skip items below this AI match score">
+                                <NumberInput
+                                    value={Number(
+                                        (config.feedBrowse as { minRelevanceScore?: number })?.minRelevanceScore ??
+                                            0.55
+                                    )}
+                                    onChange={v => patchFeedBrowse({ minRelevanceScore: v })}
+                                />
+                            </Field>
+                        </>
                     )}
                 </div>
             );

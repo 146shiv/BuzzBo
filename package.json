@@ -15,7 +15,7 @@
   "license": "ISC",
   "scripts": {
     "dev": "npm run dev -w @buzzbo/admin",
-    "dev:electron": "npm run dev -w @buzzbo/electron-app",
+    "dev:electron": "npm run build:core && npm run build:instagram-bot && npm run sync:workspace-deps -w @buzzbo/electron-app && npm run dev -w @buzzbo/electron-app",
     "dev:electron:prod": "npm run dev:prod -w @buzzbo/electron-app",
     "start": "npm run build:admin && npm run start -w @buzzbo/admin",
     "build:core": "npm run build -w @buzzbo/core",

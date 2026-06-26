@@ -122,6 +122,12 @@ class AdminApiClient {
             body: JSON.stringify(body),
         });
     }
+    async assessRelevance(body) {
+        return this.request('/api/bot/ai/assess-relevance', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+    }
 }
 exports.AdminApiClient = AdminApiClient;
 function createApiClientFromEnv() {
