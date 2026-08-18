@@ -1,15 +1,18 @@
 import type { AccountConfig } from '@buzzbo/core/config';
+import { Platform } from '@buzzbo/core/config';
 
 export function platformAccountToBotConfig(account: Record<string, unknown>): AccountConfig {
     const cfg = (account.config as Record<string, unknown>) || {};
+    const platform = Number(account.platform ?? Platform.Instagram);
+    const defaultSourceMode = platform === Platform.YouTube ? 'url_list' : 'hashtag_list';
     return {
         id: String(account.id),
-        platform: Number(account.platform),
+        platform,
         enabled: Boolean(account.enabled),
         username: String(account.username),
         loginMethod: (cfg.loginMethod as AccountConfig['loginMethod']) ?? 'manual',
         password: cfg.password as string | undefined,
-        sourceMode: cfg.sourceMode as AccountConfig['sourceMode'],
+        sourceMode: (cfg.sourceMode as AccountConfig['sourceMode']) ?? defaultSourceMode,
         hashtags: cfg.hashtags as string[] | undefined,
         hashtagSearch: cfg.hashtagSearch as AccountConfig['hashtagSearch'],
         feedBrowse: cfg.feedBrowse as AccountConfig['feedBrowse'],

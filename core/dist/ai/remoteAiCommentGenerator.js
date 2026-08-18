@@ -30,6 +30,19 @@ class RemoteAICommentGenerator {
         });
         return result.comment;
     }
+    async generateYouTubeComment(videoTitle, channelName, promptHint, description, channelSkillsContext, _overrides) {
+        const postText = [videoTitle, description?.trim()].filter(Boolean).join('\n\n');
+        const youtubeHint = promptHint?.trim()
+            ? `YouTube video comment. ${promptHint.trim()}`
+            : 'YouTube video comment — be relevant to the video title and description.';
+        const result = await this.client.generateComment({
+            postText,
+            targetUsername: channelName,
+            promptHint: youtubeHint,
+            channelSkillsContext,
+        });
+        return result.comment;
+    }
     async assessSkillsRelevance(postText, skillsContext, options) {
         let imageData;
         if (options?.imageUrl) {

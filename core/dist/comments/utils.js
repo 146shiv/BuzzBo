@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.extractPostShortcode = extractPostShortcode;
+exports.extractYouTubeVideoId = extractYouTubeVideoId;
 function extractPostShortcode(urlOrPath) {
     const match = urlOrPath.match(/instagram\.com\/(?:p|reels?)\/([^/?#]+)/i) ??
         urlOrPath.match(/\/(?:p|reels?)\/([^/?#]+)/i);
@@ -13,4 +14,17 @@ function extractPostShortcode(urlOrPath) {
         return null;
     }
     return shortcode;
+}
+/** Extract YouTube video ID from watch, youtu.be, or shorts URLs. */
+function extractYouTubeVideoId(urlOrPath) {
+    const trimmed = urlOrPath.trim();
+    const watchMatch = trimmed.match(/(?:youtube\.com\/watch\?(?:[^#]*&)?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/i);
+    if (watchMatch) {
+        return watchMatch[1];
+    }
+    const embedMatch = trimmed.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/i);
+    if (embedMatch) {
+        return embedMatch[1];
+    }
+    return null;
 }

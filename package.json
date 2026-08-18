@@ -7,6 +7,7 @@
   "workspaces": [
     "core",
     "instagram-bot",
+    "youtube-bot",
     "electron-app",
     "admin",
     "packages/ui"
@@ -15,15 +16,17 @@
   "license": "ISC",
   "scripts": {
     "dev": "npm run dev -w @buzzbo/admin",
-    "dev:electron": "npm run build:core && npm run build:instagram-bot && npm run sync:workspace-deps -w @buzzbo/electron-app && npm run dev -w @buzzbo/electron-app",
+    "dev:electron": "npm run build:core && npm run build:instagram-bot && npm run build:youtube-bot && npm run sync:workspace-deps -w @buzzbo/electron-app && npm run dev -w @buzzbo/electron-app",
     "dev:electron:prod": "npm run dev:prod -w @buzzbo/electron-app",
     "start": "npm run build:admin && npm run start -w @buzzbo/admin",
     "build:core": "npm run build -w @buzzbo/core",
     "build:instagram-bot": "npm run build -w @buzzbo/instagram-bot",
+    "build:youtube-bot": "npm run build -w @buzzbo/youtube-bot",
+    "migrate:supabase": "node scripts/migrate-supabase.mjs",
     "build:electron": "npm run build -w @buzzbo/electron-app",
     "build:electron:prod": "npm run build:prod -w @buzzbo/electron-app",
     "build:admin": "npm run build -w @buzzbo/admin",
-    "build": "npm run build:core && npm run build:instagram-bot && npm run build:electron",
+    "build": "npm run build:core && npm run build:instagram-bot && npm run build:youtube-bot && npm run build:electron",
     "dist": "npm run dist -w @buzzbo/electron-app",
     "dist:prod": "npm run dist:prod -w @buzzbo/electron-app",
     "dist:mac": "npm run dist:mac -w @buzzbo/electron-app",
@@ -34,6 +37,8 @@
     "dist:linux:prod": "npm run dist:linux:prod -w @buzzbo/electron-app"
   },
   "devDependencies": {
+    "dotenv": "^17.4.2",
+    "pg": "^8.22.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "typescript": "^5.8.3"

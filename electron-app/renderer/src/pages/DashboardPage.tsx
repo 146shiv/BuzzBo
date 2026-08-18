@@ -3,11 +3,13 @@ import { toast } from 'sonner';
 import {
     ChevronDown,
     ChevronUp,
+    Link2,
     Loader2,
     LogOut,
     Play,
     Settings,
     Square,
+    Users,
 } from 'lucide-react';
 import {
     Badge,
@@ -24,7 +26,15 @@ interface AccountRow {
     id: string;
     username: string;
     enabled: boolean;
+    platform: number;
     sourceMode?: string;
+    sessionStatus?: string;
+}
+
+const PLATFORM_YOUTUBE = 2;
+
+function platformLabel(platform: number): string {
+    return platform === PLATFORM_YOUTUBE ? 'YouTube' : 'Instagram';
 }
 
 interface BotStatus {
@@ -32,6 +42,19 @@ interface BotStatus {
     mode?: string;
     currentUrl?: string;
     accountUsername?: string;
+}
+
+interface CampaignStatus {
+    running: boolean;
+    campaignId?: string;
+    currentAccount?: string;
+    progress?: {
+        pending: number;
+        running: number;
+        done: number;
+        failed: number;
+        cancelled: number;
+    };
 }
 
 function PanelHeader({
@@ -68,6 +91,21 @@ function PanelHeader({
     );
 }
 
+function sessionBadgeVariant(status?: string): 'success' | 'muted' | 'destructive' | 'outline' {
+    if (status === 'valid') return 'success';
+    if (status === 'expired' || status === 'challenged') return 'destructive';
+    if (status === 'needs_login') return 'outline';
+    return 'muted';
+}
+
+function sessionLabel(status?: string): string {
+    if (status === 'valid') return 'Connected';
+    if (status === 'expired') return 'Expired';
+    if (status === 'challenged') return 'Challenge';
+    if (status === 'needs_login') return 'Needs login';
+    return 'Unknown';
+}
+
 export default function DashboardPage({
     username,
     onLogout,
@@ -79,10 +117,12 @@ export default function DashboardPage({
     const [accountsLoading, setAccountsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState('');
     const [status, setStatus] = useState<BotStatus>({ running: false });
+    const [campaignStatus, setCampaignStatus] = useState<CampaignStatus>({ running: false });
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [commentsCollapsed, setCommentsCollapsed] = useState(false);
     const [logsCollapsed, setLogsCollapsed] = useState(false);
     const [busy, setBusy] = useState(false);
+    const [connectingId, setConnectingId] = useState('');
     const selectedRef = useRef(selectedId);
     selectedRef.current = selectedId;
 
@@ -90,19 +130,32 @@ export default function DashboardPage({
 
     async function loadAccounts() {
         setAccountsLoading(true);
-        // #region agent log
-        fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'DashboardPage.tsx:loadAccounts',message:'accounts.list start',data:{username},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
-        // #endregion
         try {
             const rows = await window.buzzbo.accounts.list();
-            const mapped = (rows as Record<string, unknown>[]).map(r => ({
-                id: String(r.id),
-                username: String(r.username),
-                enabled: Boolean(r.enabled),
-            }));
-            // #region agent log
-            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'DashboardPage.tsx:loadAccounts',message:'accounts.list success',data:{count:mapped.length,accounts:mapped.slice(0,5)},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
-            // #endregion
+            let sessionRows: { platform_account_id: string; status: string }[] = [];
+            try {
+                sessionRows = (await window.buzzbo.sessions.list()) as {
+                    platform_account_id: string;
+                    status: string;
+                }[];
+            } catch {
+                /* fallback to local */
+            }
+            const sessionMap = new Map(sessionRows.map(s => [s.platform_account_id, s.status]));
+            const mapped = (rows as Record<string, unknown>[]).map(r => {
+                const id = String(r.id);
+                let sessionStatus = sessionMap.get(id);
+                if (!sessionStatus) {
+                    sessionStatus = 'needs_login';
+                }
+                return {
+                    id,
+                    username: String(r.username),
+                    enabled: Boolean(r.enabled),
+                    platform: Number(r.platform ?? 1),
+                    sessionStatus,
+                };
+            });
             setAccounts(mapped);
             const saved = localStorage.getItem('buzzbo-selected-account');
             const pick = mapped.find(a => a.id === saved) ?? mapped[0];
@@ -113,9 +166,6 @@ export default function DashboardPage({
                 );
             }
         } catch (err) {
-            // #region agent log
-            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'DashboardPage.tsx:loadAccounts',message:'accounts.list failed',data:{error:err instanceof Error?err.message:String(err)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-            // #endregion
             toast.error(err instanceof Error ? err.message : 'Failed to load accounts');
         } finally {
             setAccountsLoading(false);
@@ -156,23 +206,60 @@ export default function DashboardPage({
 
     useEffect(() => {
         const unsubStatus = window.buzzbo.bot.onStatus(s => setStatus(s as BotStatus));
+        const unsubCampaign = window.buzzbo.campaign.onStatus(s =>
+            setCampaignStatus(s as CampaignStatus)
+        );
         void window.buzzbo.bot.status().then(s => setStatus(s as BotStatus));
+        void window.buzzbo.campaign.status().then(s => setCampaignStatus(s as CampaignStatus));
         return () => {
             unsubStatus();
+            unsubCampaign();
         };
     }, []);
 
     const selected = accounts.find(a => a.id === selectedId);
     const accountOptions = accounts.map(a => ({
         value: a.id,
-        label: `@${a.username}${!a.enabled ? ' (disabled)' : ''}`,
+        label: `@${a.username} (${platformLabel(a.platform)})${!a.enabled ? ' (disabled)' : ''}`,
     }));
+
+    const enabledInstagram = accounts.filter(a => a.enabled && a.platform !== PLATFORM_YOUTUBE);
+    const youtubeStartBlocked =
+        selected?.platform === PLATFORM_YOUTUBE && selectedSourceMode !== 'url_list';
+    const connectLabel =
+        selected?.platform === PLATFORM_YOUTUBE ? 'Connect YouTube' : 'Connect Instagram';
+    const allConnected =
+        enabledInstagram.length > 0 &&
+        enabledInstagram.every(a => a.sessionStatus === 'valid');
+    const anyRunning = status.running || campaignStatus.running;
 
     async function handleStart() {
         if (!selectedId || !selected?.enabled) return;
+        if (youtubeStartBlocked) {
+            toast.error('YouTube accounts require URL List source mode. Update handle settings.');
+            return;
+        }
         setBusy(true);
         try {
             await window.buzzbo.bot.start(selectedId);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Failed to start bot');
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function handleStartCampaign() {
+        if (!allConnected) {
+            toast.error('Connect Instagram for all enabled accounts before starting a campaign.');
+            return;
+        }
+        setBusy(true);
+        try {
+            await window.buzzbo.campaign.start({ name: 'Campaign' });
+            toast.success('Campaign started');
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Failed to start campaign');
         } finally {
             setBusy(false);
         }
@@ -187,15 +274,53 @@ export default function DashboardPage({
         }
     }
 
+    async function handleStopCampaign() {
+        setBusy(true);
+        try {
+            await window.buzzbo.campaign.stop();
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function handleConnect(accountId: string) {
+        setConnectingId(accountId);
+        try {
+            const result = (await window.buzzbo.account.connect(accountId)) as {
+                ok: boolean;
+                error?: string;
+            };
+            if (!result.ok) {
+                toast.error(result.error || 'Connect failed');
+            } else {
+                toast.success(
+                    accounts.find(a => a.id === accountId)?.platform === PLATFORM_YOUTUBE
+                        ? 'YouTube session saved'
+                        : 'Instagram session saved'
+                );
+                await loadAccounts();
+            }
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Connect failed');
+        } finally {
+            setConnectingId('');
+        }
+    }
+
     async function handleLogout() {
         await window.buzzbo.bot.stop();
         await window.buzzbo.auth.logout();
         onLogout();
     }
 
+    const progress = campaignStatus.progress;
+    const progressLabel = progress
+        ? `${progress.done} done · ${progress.pending} pending · ${progress.failed} failed`
+        : '';
+
     return (
         <div className="flex h-full flex-col bg-background text-foreground">
-            <header className="flex shrink-0 items-center gap-3 border-b border-border/60 bg-card/40 px-4 py-2.5 backdrop-blur-md">
+            <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border/60 bg-card/40 px-4 py-2.5 backdrop-blur-md">
                 <div className="flex min-w-0 items-center gap-2.5">
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
                         B
@@ -236,38 +361,83 @@ export default function DashboardPage({
                         />
                     )}
                     {selected && !selected.enabled && <Badge variant="muted">Disabled</Badge>}
+                    {selected && (
+                        <Badge variant="outline">{platformLabel(selected.platform)}</Badge>
+                    )}
+                    {selected && (
+                        <Badge variant={sessionBadgeVariant(selected.sessionStatus)}>
+                            {sessionLabel(selected.sessionStatus)}
+                        </Badge>
+                    )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                    {status.running ? (
+                <div className="flex flex-wrap items-center gap-2">
+                    {campaignStatus.running ? (
+                        <Badge variant="success" data-testid="campaign-running-badge">
+                            Campaign
+                            {campaignStatus.currentAccount
+                                ? ` · @${campaignStatus.currentAccount}`
+                                : ''}
+                        </Badge>
+                    ) : status.running ? (
                         <Badge variant="success" data-testid="bot-running-badge">
                             Running{status.mode ? ` · ${status.mode}` : ''}
                         </Badge>
                     ) : (
                         <Badge variant="muted">Idle</Badge>
                     )}
-                    {selectedId && !status.running && (
+                    {progressLabel && campaignStatus.running && (
+                        <Badge variant="outline">{progressLabel}</Badge>
+                    )}
+                    {selectedId && !anyRunning && (
                         <Badge variant="outline" title="Source mode for next run">
                             Mode: {sourceModeLabel}
                         </Badge>
                     )}
                 </div>
 
-                <div className="ml-auto flex items-center gap-2">
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                    <Button
+                        type="button"
+                        variant="default"
+                        size="sm"
+                        onClick={handleStartCampaign}
+                        disabled={busy || anyRunning || !allConnected || enabledInstagram.length === 0}
+                        data-testid="campaign-start"
+                    >
+                        <Users className="h-4 w-4" />
+                        Start Campaign
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        onClick={handleStopCampaign}
+                        disabled={busy || !campaignStatus.running}
+                        data-testid="campaign-stop"
+                    >
+                        <Square className="h-4 w-4" />
+                        Stop Campaign
+                    </Button>
                     <Button
                         type="button"
                         variant="success"
                         size="sm"
                         onClick={handleStart}
-                        disabled={busy || status.running || !selected?.enabled}
+                        disabled={busy || anyRunning || !selected?.enabled || youtubeStartBlocked}
+                        title={
+                            youtubeStartBlocked
+                                ? 'YouTube accounts only support URL List source mode'
+                                : undefined
+                        }
                         data-testid="bot-start"
                     >
-                        {busy && !status.running ? (
+                        {busy && !anyRunning ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                             <Play className="h-4 w-4" />
                         )}
-                        Start
+                        Start One
                     </Button>
                     <Button
                         type="button"
@@ -278,8 +448,25 @@ export default function DashboardPage({
                         data-testid="bot-stop"
                     >
                         <Square className="h-4 w-4" />
-                        Stop
+                        Stop One
                     </Button>
+                    {selectedId && selected?.sessionStatus !== 'valid' && (
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => void handleConnect(selectedId)}
+                            disabled={!!connectingId}
+                            data-testid="connect-instagram"
+                        >
+                            {connectingId === selectedId ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <Link2 className="h-4 w-4" />
+                            )}
+                            {connectLabel}
+                        </Button>
+                    )}
                     <Button
                         type="button"
                         variant="secondary"
@@ -309,6 +496,37 @@ export default function DashboardPage({
                     </Button>
                 </div>
             </header>
+
+            {accounts.length > 0 && (
+                <div className="flex shrink-0 flex-wrap gap-2 border-b border-border/40 px-4 py-2">
+                    {accounts.map(a => (
+                        <div
+                            key={a.id}
+                            className="flex items-center gap-1.5 rounded-md border border-border/50 bg-muted/20 px-2 py-1 text-xs"
+                        >
+                            <span className="font-medium">@{a.username}</span>
+                            <Badge variant="outline" className="text-[10px]">
+                                {platformLabel(a.platform)}
+                            </Badge>
+                            <Badge variant={sessionBadgeVariant(a.sessionStatus)} className="text-[10px]">
+                                {sessionLabel(a.sessionStatus)}
+                            </Badge>
+                            {a.enabled && a.sessionStatus !== 'valid' && (
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 px-1.5 text-[10px]"
+                                    disabled={connectingId === a.id}
+                                    onClick={() => void handleConnect(a.id)}
+                                >
+                                    Connect
+                                </Button>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
 
             <main
                 className="flex min-h-0 flex-1 flex-col gap-3 p-4"

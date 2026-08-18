@@ -1,0 +1,16 @@
+{
+  "name": "@buzzbo/youtube-bot",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "playwright install chromium"
+  },
+  "dependencies": {
+    "@buzzbo/core": "1.0.0",
+    "playwright": "^1.53.1"
+  }
+}

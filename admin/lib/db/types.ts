@@ -84,3 +84,64 @@ export interface DashboardStats {
     totalPlatformAccounts: number;
     totalComments: number;
 }
+
+export type AccountSessionStatus = 'needs_login' | 'valid' | 'expired' | 'challenged';
+
+export interface DbAccountSession {
+    id: string;
+    platform_account_id: string;
+    storage_state_encrypted: string | null;
+    fingerprint_json: Record<string, unknown>;
+    status: AccountSessionStatus;
+    last_synced_at: string | null;
+    last_validated_at: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface AccountSessionPublic {
+    platform_account_id: string;
+    username?: string;
+    status: AccountSessionStatus;
+    last_synced_at: string | null;
+    last_validated_at: string | null;
+}
+
+export type CampaignStatus = 'draft' | 'running' | 'paused' | 'completed' | 'stopped';
+
+export interface DbCampaign {
+    id: string;
+    user_id: string;
+    name: string;
+    status: CampaignStatus;
+    max_concurrency: number;
+    created_at: string;
+    updated_at: string;
+}
+
+export type CommentJobStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
+export type CommentJobTargetType = 'hashtag' | 'url';
+
+export interface DbCommentJob {
+    id: string;
+    campaign_id: string;
+    platform_account_id: string;
+    platform: Platform;
+    target_type: CommentJobTargetType;
+    target_value: string;
+    post_url: string | null;
+    scheduled_at: string;
+    status: CommentJobStatus;
+    attempts: number;
+    error: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface CampaignProgress {
+    pending: number;
+    running: number;
+    done: number;
+    failed: number;
+    cancelled: number;
+}

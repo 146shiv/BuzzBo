@@ -42,7 +42,14 @@ export function ManageAccountsSheet({ open, onOpenChange, userId, accounts, onUp
         try {
             await apiFetch(`/api/admin/users/${userId}/accounts`, {
                 method: 'POST',
-                body: JSON.stringify({ ...form, username: form.username.trim() }),
+                body: JSON.stringify({
+                    ...form,
+                    username: form.username.trim(),
+                    config:
+                        form.platform === Platform.YouTube
+                            ? { sourceMode: 'url_list' }
+                            : undefined,
+                }),
             });
             toast.success('Account created');
             setForm({ platform: Platform.Instagram, username: '', enabled: true });

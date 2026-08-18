@@ -49,6 +49,52 @@ export interface AssessRelevanceRequest {
         mimeType: string;
     };
 }
+export type AccountSessionStatus = 'needs_login' | 'valid' | 'expired' | 'challenged';
+export interface AccountSessionStatusRow {
+    platform_account_id: string;
+    username?: string;
+    status: AccountSessionStatus;
+    last_synced_at: string | null;
+    last_validated_at: string | null;
+}
+export interface AccountSessionPayload {
+    platform_account_id: string;
+    status: AccountSessionStatus;
+    storageState: Record<string, unknown> | null;
+    fingerprint: Record<string, unknown> | null;
+    last_synced_at: string | null;
+    last_validated_at: string | null;
+}
+export type CampaignStatus = 'draft' | 'running' | 'paused' | 'completed' | 'stopped';
+export interface CampaignRecord {
+    id: string;
+    user_id: string;
+    name: string;
+    status: CampaignStatus;
+    max_concurrency: number;
+    created_at: string;
+    updated_at: string;
+}
+export interface CampaignProgress {
+    pending: number;
+    running: number;
+    done: number;
+    failed: number;
+    cancelled: number;
+}
+export interface CommentJobRecord {
+    id: string;
+    campaign_id: string;
+    platform_account_id: string;
+    platform: number;
+    target_type: 'hashtag' | 'url';
+    target_value: string;
+    post_url: string | null;
+    scheduled_at: string;
+    status: string;
+    attempts: number;
+    error: string | null;
+}
 export declare function resolveAdminApiBaseUrl(): string | null;
 export declare class AdminApiClient {
     private readonly options;
@@ -88,6 +134,65 @@ export declare class AdminApiClient {
         relevant: boolean;
         score: number;
         reason: string;
+    }>;
+    listSessionStatuses(): Promise<AccountSessionStatusRow[]>;
+    getAccountSession(accountId: string): Promise<AccountSessionPayload>;
+    putAccountSession(accountId: string, payload: {
+        storageState: Record<string, unknown>;
+        fingerprint?: Record<string, unknown>;
+    }): Promise<{
+        platform_account_id: string;
+        status: AccountSessionStatus;
+    }>;
+    patchAccountSessionStatus(accountId: string, status: AccountSessionStatus): Promise<{
+        platform_account_id: string;
+        status: AccountSessionStatus;
+    }>;
+    createCampaign(opts?: {
+        name?: string;
+        maxConcurrency?: number;
+    }): Promise<{
+        campaign: CampaignRecord;
+        progress: CampaignProgress;
+        jobsCreated: number;
+    }>;
+    getCampaign(campaignId: string): Promise<{
+        campaign: CampaignRecord;
+        progress: CampaignProgress;
+    }>;
+    listCampaigns(): Promise<{
+        campaigns: CampaignRecord[];
+    }>;
+    pauseCampaign(campaignId: string): Promise<{
+        campaign: CampaignRecord;
+        progress: CampaignProgress;
+    }>;
+    resumeCampaign(campaignId: string): Promise<{
+        campaign: CampaignRecord;
+        progress: CampaignProgress;
+    }>;
+    stopCampaign(campaignId: string): Promise<{
+        campaign: CampaignRecord;
+        progress: CampaignProgress;
+    }>;
+    claimCampaignJobs(campaignId: string, limit?: number): Promise<{
+        jobs: CommentJobRecord[];
+    }>;
+    completeCampaignJob(campaignId: string, payload: {
+        jobId: string;
+        status: 'done' | 'failed';
+        error?: string;
+        enqueueFollowUp?: boolean;
+    }): Promise<{
+        job: CommentJobRecord;
+        progress: CampaignProgress;
+    }>;
+    listCampaignJobs(campaignId: string, opts?: {
+        limit?: number;
+        offset?: number;
+    }): Promise<{
+        jobs: CommentJobRecord[];
+        total: number;
     }>;
 }
 export declare function createApiClientFromEnv(): AdminApiClient | null;

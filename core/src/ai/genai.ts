@@ -93,6 +93,14 @@ export interface AICommentGeneratorAdapter {
         mentionHandle?: string,
         overrides?: GenerateCommentOverrides
     ): Promise<string>;
+    generateYouTubeComment(
+        videoTitle: string,
+        channelName: string,
+        promptHint?: string,
+        description?: string,
+        channelSkillsContext?: string,
+        overrides?: GenerateCommentOverrides
+    ): Promise<string>;
     assessSkillsRelevance(
         postText: string,
         skillsContext: string,
@@ -101,7 +109,7 @@ export interface AICommentGeneratorAdapter {
 }
 
 interface OpenAiChatMessage {
-    role: 'user';
+    role: 'user' | 'system';
     content: string | OpenAiContentPart[];
 }
 
@@ -489,6 +497,108 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
         }
     }
 
+    private buildYouTubePrompt(
+        videoTitle: string,
+        channelName: string,
+        promptHint?: string,
+        description?: string,
+        channelSkillsContext?: string
+    ): string {
+        const sections: string[] = [
+            `Write one YouTube comment on a video by ${channelName}.`,
+            '',
+            '## Video title',
+            videoTitle.trim() || '(no title)',
+        ];
+
+        const desc = description?.trim();
+        if (desc) {
+            sections.push('', '## Video description (excerpt)', desc.slice(0, 800));
+        }
+
+        sections.push(
+            '',
+            '## Context rule',
+            'Ground the comment in the video title and description. Do not write a generic comment detached from this video.'
+        );
+
+        const skills = channelSkillsContext?.trim();
+        if (skills) {
+            sections.push('', '## Style guide', skills);
+        }
+
+        if (promptHint?.trim()) {
+            sections.push('', '## Extra hint', promptHint.trim());
+        }
+
+        sections.push(
+            '',
+            '## Output',
+            'Return only the comment text. No quotes, labels, numbering, or explanation.',
+            'Be conversational and relevant to the video topic.',
+            'Do NOT use Instagram-style @mentions unless explicitly requested in the style guide.',
+            'NEVER say you lack context or ask for more information.'
+        );
+
+        return sections.join('\n');
+    }
+
+    public async generateYouTubeComment(
+        videoTitle: string,
+        channelName: string,
+        promptHint?: string,
+        description?: string,
+        channelSkillsContext?: string,
+        overrides?: GenerateCommentOverrides
+    ): Promise<string> {
+        if (this.mockComments) {
+            const comment = this.generateMockComment(videoTitle, channelName);
+            console.log(`[AI_MOCK] Using mock YouTube comment for ${channelName}: "${comment}"`);
+            return comment;
+        }
+
+        const promptText = this.buildYouTubePrompt(
+            videoTitle,
+            channelName,
+            promptHint,
+            description,
+            channelSkillsContext
+        );
+
+        try {
+            switch (this.provider) {
+                case 'gemini':
+                    return await this.generateWithGemini(promptText, null, null, channelName);
+                case 'groq':
+                    return await this.generateWithOpenAiCompatible(
+                        'groq',
+                        'https://api.groq.com/openai/v1',
+                        this.groqApiKey,
+                        this.groqModel,
+                        this.buildOpenAiMessages(promptText, null),
+                        channelName
+                    );
+                case 'local':
+                    return await this.generateWithOpenAiCompatible(
+                        'local',
+                        this.localLlmBaseUrl,
+                        undefined,
+                        this.localLlmModel,
+                        this.buildOpenAiMessages(promptText, null),
+                        channelName
+                    );
+                default:
+                    throw new Error(`Unsupported AI provider: ${this.provider}`);
+            }
+        } catch (error) {
+            console.error(`[AI_ERROR] ${this.provider} YouTube request failed:`, error);
+            if (overrides?.preserveErrorMessage && error instanceof Error) {
+                throw error;
+            }
+            throw new Error(`Failed to generate YouTube comment for ${channelName} using ${this.provider}.`);
+        }
+    }
+
     private buildRelevancePrompt(
         postText: string,
         skillsContext: string,
@@ -531,7 +641,8 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
     private async callLlmRawText(
         promptText: string,
         imageData: MediaPayload | null,
-        videoData: MediaPayload | null
+        videoData: MediaPayload | null,
+        options?: { jsonMode?: boolean }
     ): Promise<string> {
         switch (this.provider) {
             case 'gemini': {
@@ -560,8 +671,9 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
                     'groq',
                     'https://api.groq.com/openai/v1',
                     this.groqApiKey,
-                    imageData ? this.groqVisionModel : this.groqModel,
-                    this.buildOpenAiMessages(promptText, imageData)
+                    imageData && !options?.jsonMode ? this.groqVisionModel : this.groqModel,
+                    this.buildOpenAiMessages(promptText, options?.jsonMode ? null : imageData),
+                    options
                 );
             case 'local':
                 return this.callOpenAiCompatibleRaw(
@@ -569,7 +681,8 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
                     this.localLlmBaseUrl,
                     undefined,
                     this.localLlmModel,
-                    this.buildOpenAiMessages(promptText, imageData)
+                    this.buildOpenAiMessages(promptText, options?.jsonMode ? null : imageData),
+                    options
                 );
             default:
                 throw new Error(`Unsupported AI provider: ${this.provider}`);
@@ -581,20 +694,32 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
         apiUrl: string,
         apiKey: string | undefined,
         model: string,
-        messages: OpenAiChatMessage[]
+        messages: OpenAiChatMessage[],
+        options?: { jsonMode?: boolean }
     ): Promise<string> {
         await this.rateLimiter.acquire();
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
+        const requestMessages: OpenAiChatMessage[] = options?.jsonMode
+            ? [
+                  {
+                      role: 'system',
+                      content: 'Reply with a single JSON object only. No markdown or extra text.',
+                  },
+                  ...messages,
+              ]
+            : messages;
 
         const response = await fetch(`${apiUrl}/chat/completions`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
                 model,
-                messages,
+                messages: requestMessages,
                 temperature: 0.2,
-                max_tokens: 120,
+                max_tokens: options?.jsonMode ? 150 : 120,
+                ...(options?.jsonMode ? { response_format: { type: 'json_object' } } : {}),
             }),
         });
 
@@ -634,9 +759,16 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
         if (options?.videoUrl && this.provider === 'gemini') {
             videoData = await this.fetchVideoAsBase64(options.videoUrl);
             hasMedia = Boolean(videoData);
-        } else if (!imageData && options?.imageUrl) {
+        } else if (!imageData && options?.imageUrl && this.provider !== 'groq') {
             imageData = await fetchImageAsBase64ForComment(options.imageUrl);
             hasMedia = Boolean(imageData);
+        }
+
+        // Groq vision model often ignores JSON instructions on reel posters; caption is enough.
+        if (this.provider === 'groq') {
+            imageData = null;
+            videoData = null;
+            hasMedia = false;
         }
 
         const promptText = this.buildRelevancePrompt(
@@ -647,8 +779,16 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
         );
 
         try {
-            const raw = await this.callLlmRawText(promptText, imageData, videoData);
-            return parseSkillsRelevanceResponse(raw);
+            const raw = await this.callLlmRawText(promptText, imageData, videoData, { jsonMode: true });
+            const assessment = parseSkillsRelevanceResponse(raw);
+            if (
+                assessment.score === 0 &&
+                (assessment.reason === 'Could not parse AI relevance response' ||
+                    assessment.reason === 'Invalid JSON from relevance assessment')
+            ) {
+                console.warn(`[AI_WARN] Relevance parse failed; raw: ${raw.slice(0, 240)}`);
+            }
+            return assessment;
         } catch (error) {
             console.error(`[AI_ERROR] Relevance assessment failed:`, error);
             return {
@@ -777,7 +917,11 @@ export function hasActionablePostContext(
 }
 
 export function parseSkillsRelevanceResponse(raw: string): SkillsRelevanceAssessment {
-    const trimmed = raw.trim();
+    let trimmed = raw.trim();
+    const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenceMatch) {
+        trimmed = fenceMatch[1].trim();
+    }
     const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
         return { relevant: false, score: 0, reason: 'Could not parse AI relevance response' };

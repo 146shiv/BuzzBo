@@ -1,20 +1,30 @@
 import { EventEmitter } from 'events';
 import type { Browser } from 'playwright';
 import type { AccountConfig, SettingsConfig } from '@buzzbo/core/config';
+import { Platform } from '@buzzbo/core/config';
 import type { AICommentGeneratorAdapter } from '@buzzbo/core/ai/genai';
 import type { CommentHistoryAdapter } from '@buzzbo/core/comments';
 import { RemoteCommentHistoryStore, extractPostShortcode } from '@buzzbo/core/comments';
 import {
     fetchRecentMediaBatch,
     formatEngagementCounts,
+    InstagramBot,
     mapApiPostsToCandidates,
     rankHashtagCandidates,
     searchHashtagId,
 } from '@buzzbo/instagram-bot';
 import { platformAccountToBotConfig } from './platformAccountMapper';
-import { initializeBotSession } from './botSession';
+import { initializeBotSession, type PlatformBotInstance } from './botSession';
 import { resolveAccountSettings } from './resolveAccountSettings';
 import { UiLogger } from './uiLogger';
+import { browserPool } from './browserPool';
+
+function requireInstagramBot(bot: PlatformBotInstance): InstagramBot {
+    if (!(bot instanceof InstagramBot)) {
+        throw new Error('This operation requires an Instagram account');
+    }
+    return bot;
+}
 
 export interface BotStatus {
     running: boolean;
@@ -62,7 +72,7 @@ export class BotRunner extends EventEmitter {
         this.clearHeartbeat();
         if (this.browser) {
             try {
-                await this.browser.close();
+                await browserPool.release();
             } catch {
                 /* ignore */
             }
@@ -167,6 +177,11 @@ export class BotRunner extends EventEmitter {
         }
 
         try {
+            if (runConfig.account.platform === Platform.YouTube && runConfig.sourceMode !== 'url_list') {
+                logger.error('YouTube accounts only support URL List source mode.');
+                return;
+            }
+
             switch (runConfig.sourceMode) {
                 case 'url_list':
                     await this.runUrlList(runConfig, logger, skills);
@@ -218,7 +233,7 @@ export class BotRunner extends EventEmitter {
             );
             return result;
         } finally {
-            await session.browser.close();
+            await session.close();
             this.browser = null;
         }
     }
@@ -259,8 +274,8 @@ export class BotRunner extends EventEmitter {
         );
         if (!session) return;
 
-        const { browser, bot } = session;
-        this.browser = browser;
+        const bot = requireInstagramBot(session.bot);
+        this.browser = session.browser;
         const searchConfig = resolved.hashtagSearch.ui_search;
         const commentedShortcodes = this.commentHistory.getCommentedShortcodes(
             runConfig.accountUsername
@@ -335,7 +350,7 @@ export class BotRunner extends EventEmitter {
                 }
             }
         } finally {
-            await browser.close();
+            await session.close();
             this.browser = null;
         }
     }
@@ -379,8 +394,8 @@ export class BotRunner extends EventEmitter {
         );
         if (!session) return;
 
-        const { browser, bot } = session;
-        this.browser = browser;
+        const bot = requireInstagramBot(session.bot);
+        this.browser = session.browser;
         const commentedShortcodes = this.commentHistory.getCommentedShortcodes(
             runConfig.accountUsername
         );
@@ -505,7 +520,7 @@ export class BotRunner extends EventEmitter {
                 }
             }
         } finally {
-            await browser.close();
+            await session.close();
             this.browser = null;
         }
     }
@@ -532,8 +547,8 @@ export class BotRunner extends EventEmitter {
         );
         if (!session) return;
 
-        const { browser, bot } = session;
-        this.browser = browser;
+        const { bot } = session;
+        this.browser = session.browser;
 
         try {
             for (let i = 0; i < postUrls.length; i++) {
@@ -560,7 +575,7 @@ export class BotRunner extends EventEmitter {
                 }
             }
         } finally {
-            await browser.close();
+            await session.close();
             this.browser = null;
         }
     }
@@ -595,8 +610,8 @@ export class BotRunner extends EventEmitter {
         );
         if (!session) return;
 
-        const { browser, bot } = session;
-        this.browser = browser;
+        const bot = requireInstagramBot(session.bot);
+        this.browser = session.browser;
 
         const state = { itemsScanned: 0, commentsPosted: 0 };
         const callbacks = {
@@ -648,7 +663,7 @@ export class BotRunner extends EventEmitter {
                 `Feed browse finished — scanned ${state.itemsScanned} item(s), posted ${state.commentsPosted} comment(s).`
             );
         } finally {
-            await browser.close();
+            await session.close();
             this.browser = null;
         }
     }
@@ -670,10 +685,11 @@ export function buildRunConfigFromAccount(
 ): RunConfig {
     const account = platformAccountToBotConfig(rawAccount);
     const cfg = (rawAccount.config as Record<string, unknown>) || {};
+    const defaultSourceMode = account.platform === Platform.YouTube ? 'url_list' : 'hashtag_list';
     return {
         accountId: String(rawAccount.id),
         accountUsername: account.username,
-        sourceMode: String(cfg.sourceMode || 'hashtag_list'),
+        sourceMode: String(cfg.sourceMode || account.sourceMode || defaultSourceMode),
         postUrls: (rawAccount.post_urls as string[]) || [],
         skillsContent: String(rawAccount.skills_content || ''),
         aiPromptHint: cfg.aiPromptHint as string | undefined,

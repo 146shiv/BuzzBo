@@ -3,9 +3,14 @@ import bcrypt from 'bcryptjs';
 import type {
     CommentHistoryRepository,
     ConfigurationRepository,
+    CreateCampaignInput,
+    CreateCommentJobInput,
     CreateConfigurationInput,
     CreatePlatformAccountInput,
     CreateUserInput,
+    AccountSessionRepository,
+    CampaignRepository,
+    CommentJobRepository,
     PlatformAccountRepository,
     Repositories,
     UpdateConfigurationInput,
@@ -15,15 +20,22 @@ import type {
     UserRepository,
 } from '../repository';
 import type {
+    AccountSessionPublic,
+    AccountSessionStatus,
+    CampaignProgress,
+    CampaignStatus,
     DashboardStats,
+    DbAccountSession,
+    DbCampaign,
     DbCommentedPost,
+    DbCommentJob,
     DbConfiguration,
     DbPlatformAccount,
     DbUser,
     Platform,
     UserPublic,
 } from '../types';
-import { decryptConfigSecrets, encryptConfigSecrets } from '@/lib/crypto';
+import { decryptConfigSecrets, encryptConfigSecrets, encryptSecret, decryptSecret } from '@/lib/crypto';
 import type { SettingsConfig } from '@shared/config-types';
 
 let client: SupabaseClient | null = null;
@@ -403,12 +415,269 @@ const commentsRepo: CommentHistoryRepository = {
     },
 };
 
+function mapAccountSession(row: Record<string, unknown>): DbAccountSession {
+    return row as unknown as DbAccountSession;
+}
+
+function mapCampaign(row: Record<string, unknown>): DbCampaign {
+    return row as unknown as DbCampaign;
+}
+
+function mapCommentJob(row: Record<string, unknown>): DbCommentJob {
+    return {
+        ...(row as unknown as DbCommentJob),
+        platform: row.platform as Platform,
+    };
+}
+
+const accountSessionsRepo: AccountSessionRepository = {
+    async findByAccountId(accountId) {
+        const { data, error } = await getSupabase()
+            .from('account_sessions')
+            .select('*')
+            .eq('platform_account_id', accountId)
+            .maybeSingle();
+        if (error) throw error;
+        return data ? mapAccountSession(data) : null;
+    },
+
+    async upsert(input) {
+        const now = new Date().toISOString();
+        const row: Record<string, unknown> = {
+            platform_account_id: input.platform_account_id,
+            updated_at: now,
+        };
+        if (input.storage_state_encrypted !== undefined) {
+            row.storage_state_encrypted = input.storage_state_encrypted;
+        }
+        if (input.fingerprint_json !== undefined) {
+            row.fingerprint_json = input.fingerprint_json;
+        }
+        if (input.status !== undefined) row.status = input.status;
+        if (input.last_synced_at !== undefined) row.last_synced_at = input.last_synced_at;
+        if (input.last_validated_at !== undefined) {
+            row.last_validated_at = input.last_validated_at;
+        }
+
+        const { data, error } = await getSupabase()
+            .from('account_sessions')
+            .upsert(row, { onConflict: 'platform_account_id' })
+            .select()
+            .single();
+        if (error) throw error;
+        return mapAccountSession(data);
+    },
+
+    async updateStatus(accountId, status) {
+        const { data, error } = await getSupabase()
+            .from('account_sessions')
+            .update({ status, updated_at: new Date().toISOString() })
+            .eq('platform_account_id', accountId)
+            .select()
+            .single();
+        if (error) throw error;
+        return mapAccountSession(data);
+    },
+
+    async listStatusesByUserId(userId) {
+        const { data: accounts, error: accErr } = await getSupabase()
+            .from('platform_accounts')
+            .select('id, username')
+            .eq('user_id', userId);
+        if (accErr) throw accErr;
+
+        if (!accounts?.length) return [];
+
+        const { data: sessions, error: sessErr } = await getSupabase()
+            .from('account_sessions')
+            .select('platform_account_id, status, last_synced_at, last_validated_at')
+            .in(
+                'platform_account_id',
+                (accounts || []).map(a => a.id as string)
+            );
+        if (sessErr) throw sessErr;
+
+        const sessionMap = new Map(
+            (sessions || []).map(s => [s.platform_account_id as string, s])
+        );
+
+        return (accounts || []).map(acc => {
+            const sess = sessionMap.get(acc.id as string);
+            return {
+                platform_account_id: acc.id as string,
+                username: acc.username as string,
+                status: (sess?.status as AccountSessionStatus) || 'needs_login',
+                last_synced_at: (sess?.last_synced_at as string) || null,
+                last_validated_at: (sess?.last_validated_at as string) || null,
+            } satisfies AccountSessionPublic;
+        });
+    },
+};
+
+const campaignsRepo: CampaignRepository = {
+    async findById(id) {
+        const { data, error } = await getSupabase()
+            .from('campaigns')
+            .select('*')
+            .eq('id', id)
+            .maybeSingle();
+        if (error) throw error;
+        return data ? mapCampaign(data) : null;
+    },
+
+    async create(input: CreateCampaignInput) {
+        const { data, error } = await getSupabase()
+            .from('campaigns')
+            .insert({
+                user_id: input.user_id,
+                name: input.name ?? 'Campaign',
+                status: 'running',
+                max_concurrency: input.max_concurrency ?? 1,
+            })
+            .select()
+            .single();
+        if (error) throw error;
+        return mapCampaign(data);
+    },
+
+    async updateStatus(id, status: CampaignStatus) {
+        const { data, error } = await getSupabase()
+            .from('campaigns')
+            .update({ status, updated_at: new Date().toISOString() })
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) throw error;
+        return mapCampaign(data);
+    },
+
+    async listByUserId(userId) {
+        const { data, error } = await getSupabase()
+            .from('campaigns')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        return (data || []).map(mapCampaign);
+    },
+
+    async getProgress(campaignId) {
+        const { data, error } = await getSupabase()
+            .from('comment_jobs')
+            .select('status')
+            .eq('campaign_id', campaignId);
+        if (error) throw error;
+
+        const progress: CampaignProgress = {
+            pending: 0,
+            running: 0,
+            done: 0,
+            failed: 0,
+            cancelled: 0,
+        };
+        for (const row of data || []) {
+            const s = row.status as keyof CampaignProgress;
+            if (s in progress) progress[s]++;
+        }
+        return progress;
+    },
+};
+
+const commentJobsRepo: CommentJobRepository = {
+    async createMany(jobs: CreateCommentJobInput[]) {
+        if (jobs.length === 0) return [];
+        const rows = jobs.map(j => ({
+            campaign_id: j.campaign_id,
+            platform_account_id: j.platform_account_id,
+            platform: j.platform,
+            target_type: j.target_type,
+            target_value: j.target_value,
+            post_url: j.post_url ?? null,
+            scheduled_at: j.scheduled_at,
+            status: 'pending',
+        }));
+        const { data, error } = await getSupabase().from('comment_jobs').insert(rows).select();
+        if (error) throw error;
+        return (data || []).map(mapCommentJob);
+    },
+
+    async claimDueJobs(campaignId, limit) {
+        const now = new Date().toISOString();
+        const { data: pending, error: fetchErr } = await getSupabase()
+            .from('comment_jobs')
+            .select('*')
+            .eq('campaign_id', campaignId)
+            .eq('status', 'pending')
+            .lte('scheduled_at', now)
+            .order('scheduled_at', { ascending: true })
+            .limit(limit);
+        if (fetchErr) throw fetchErr;
+        if (!pending?.length) return [];
+
+        const claimed: DbCommentJob[] = [];
+        for (const job of pending) {
+            const { data, error } = await getSupabase()
+                .from('comment_jobs')
+                .update({
+                    status: 'running',
+                    attempts: (job.attempts as number) + 1,
+                    updated_at: now,
+                })
+                .eq('id', job.id)
+                .eq('status', 'pending')
+                .select()
+                .maybeSingle();
+            if (error) throw error;
+            if (data) claimed.push(mapCommentJob(data));
+        }
+        return claimed;
+    },
+
+    async updateJob(id, patch) {
+        const { data, error } = await getSupabase()
+            .from('comment_jobs')
+            .update({ ...patch, updated_at: new Date().toISOString() })
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) throw error;
+        return mapCommentJob(data);
+    },
+
+    async listByCampaign(campaignId, opts = {}) {
+        const limit = opts.limit ?? 50;
+        const offset = opts.offset ?? 0;
+        const { data, error, count } = await getSupabase()
+            .from('comment_jobs')
+            .select('*', { count: 'exact' })
+            .eq('campaign_id', campaignId)
+            .order('scheduled_at', { ascending: true })
+            .range(offset, offset + limit - 1);
+        if (error) throw error;
+        return { jobs: (data || []).map(mapCommentJob), total: count ?? 0 };
+    },
+
+    async cancelPending(campaignId) {
+        const { data, error } = await getSupabase()
+            .from('comment_jobs')
+            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+            .eq('campaign_id', campaignId)
+            .eq('status', 'pending')
+            .select('id');
+        if (error) throw error;
+        return data?.length ?? 0;
+    },
+};
+
 export function getRepositories(): Repositories {
     return {
         users: usersRepo,
         configurations: configurationsRepo,
         platformAccounts: platformAccountsRepo,
         comments: commentsRepo,
+        accountSessions: accountSessionsRepo,
+        campaigns: campaignsRepo,
+        commentJobs: commentJobsRepo,
         async getStats(): Promise<DashboardStats> {
             const [totalUsers, totalPlatformAccounts, totalComments] = await Promise.all([
                 usersRepo.countByRole('user'),
