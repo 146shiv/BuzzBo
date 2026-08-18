@@ -38,7 +38,7 @@ function registerIpc(): void {
         ipcMain.handle(channel, handler as Parameters<typeof ipcMain.handle>[1]);
     }
 
-    for (const event of ['bot:status', 'bot:log', 'bot:comment'] as const) {
+    for (const event of ['bot:status', 'bot:log', 'bot:comment', 'campaign:status'] as const) {
         appContext.on(event, payload => {
             for (const win of BrowserWindow.getAllWindows()) {
                 win.webContents.send(event, payload);

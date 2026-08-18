@@ -1,0 +1,11 @@
+# Minimal Supabase CLI config for remote db push
+project_id = "cnqjxipgdgyjtlmiacwu"
+
+[db]
+major_version = 15
+
+[api]
+enabled = false
+
+[studio]
+enabled = false

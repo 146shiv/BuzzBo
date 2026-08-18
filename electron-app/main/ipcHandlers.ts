@@ -5,6 +5,7 @@ import { buildRunConfigFromAccount, type RunConfig } from './botRunner';
 import { initializeBotSession } from './botSession';
 import { UiLogger } from './uiLogger';
 import { appContext } from './appContext';
+import { SessionSync } from './sessionSync';
 
 export function registerIpcHandlers(): typeof handlers {
     return handlers;
@@ -26,42 +27,14 @@ export const handlers = {
     },
 
     async 'accounts:list'() {
-        // #region agent log
-        fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:list',message:'ipc list start',data:{cachedCount:appContext.rawAccounts.length,hasToken:!!appContext.client?.getToken()},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
-        // #endregion
-        try {
-            appContext.ensureClient();
-            if (appContext.rawAccounts.length === 0) await appContext.refreshConfig();
-            const rows = appContext.rawAccounts;
-            // #region agent log
-            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:list',message:'ipc list success',data:{count:rows.length,ids:rows.slice(0,5).map(r=>String(r.id)),usernames:rows.slice(0,5).map(r=>String(r.username))},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
-            // #endregion
-            return rows;
-        } catch (err) {
-            // #region agent log
-            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:list',message:'ipc list error',data:{error:err instanceof Error?err.message:String(err)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-            // #endregion
-            throw err;
-        }
+        appContext.ensureClient();
+        if (appContext.rawAccounts.length === 0) await appContext.refreshConfig();
+        return appContext.rawAccounts;
     },
 
     async 'accounts:get'(_e: unknown, id: string) {
-        // #region agent log
-        fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:get',message:'ipc handler start',data:{id,hasClient:!!appContext.client,hasToken:!!appContext.client?.getToken()},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
-        // #endregion
-        try {
-            const client = appContext.ensureClient();
-            const account = await client.getAccount(id);
-            // #region agent log
-            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:get',message:'ipc handler success',data:{id,hasAccount:account!=null},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-            // #endregion
-            return account;
-        } catch (err) {
-            // #region agent log
-            fetch('http://127.0.0.1:7812/ingest/bbb13829-4a4f-4b08-be95-693d0e6ccb9d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e0ccc5'},body:JSON.stringify({sessionId:'e0ccc5',location:'ipcHandlers.ts:accounts:get',message:'ipc handler error',data:{id,error:err instanceof Error?err.message:String(err)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-            // #endregion
-            throw err;
-        }
+        const client = appContext.ensureClient();
+        return client.getAccount(id);
     },
 
     async 'accounts:update'(_e: unknown, payload: { id: string; patch: Record<string, unknown> }) {
@@ -91,6 +64,7 @@ export const handlers = {
 
     async 'bot:stop'() {
         await appContext.botRunner.stop();
+        await appContext.campaignRunner.stop();
         return { ok: true };
     },
 
@@ -105,8 +79,15 @@ export const handlers = {
         if (!account) throw new Error('Account not found');
         if (!account.enabled) throw new Error('Account is disabled');
         const platform = Number(account.platform ?? Platform.Instagram);
-        if (platform === Platform.YouTube) throw new Error('YouTube bot is not implemented yet');
-        if (platform !== Platform.Instagram) throw new Error(`Unsupported platform: ${platform}`);
+        if (platform !== Platform.Instagram && platform !== Platform.YouTube) {
+            throw new Error(`Unsupported platform: ${platform}`);
+        }
+
+        const cfg = (account.config as Record<string, unknown>) || {};
+        const sourceMode = String(cfg.sourceMode || (platform === Platform.YouTube ? 'url_list' : 'hashtag_list'));
+        if (platform === Platform.YouTube && sourceMode !== 'url_list') {
+            throw new Error('YouTube accounts only support URL List source mode');
+        }
 
         const runConfig = buildRunConfigFromAccount(appContext.settings, account);
         void appContext.botRunner.start(runConfig);
@@ -123,13 +104,26 @@ export const handlers = {
         return appContext.botRunner.testComment(runConfig, payload.url);
     },
 
-    async 'account:session-status'(_e: unknown, username: string) {
-        return appContext.getSessionStatus(username);
+    async 'account:session-status'(_e: unknown, payload: { username: string; platform?: number }) {
+        const platform = Number(payload.platform ?? Platform.Instagram);
+        return appContext.getSessionStatus(platform, payload.username);
+    },
+
+    async 'accounts:session-statuses'() {
+        return appContext.refreshSessionStatuses();
     },
 
     async 'account:login'(_e: unknown, username: string) {
         const account = appContext.rawAccounts.find(a => String(a.username) === username);
         if (!account) return { ok: false, error: 'Account not found' };
+        return handlers['account:connect'](_e, { accountId: String(account.id) });
+    },
+
+    async 'account:connect'(_e: unknown, payload: { accountId: string }) {
+        const account = appContext.rawAccounts.find(a => String(a.id) === payload.accountId);
+        if (!account) return { ok: false, error: 'Account not found' };
+        const username = String(account.username);
+        const platform = Number(account.platform ?? Platform.Instagram);
         const cfg = platformAccountToBotConfig(account);
         const logger = new UiLogger(username, appContext.botRunner);
         const session = await initializeBotSession(
@@ -139,10 +133,36 @@ export const handlers = {
             appContext.commentHistory,
             logger,
             String(account.skills_content || ''),
-            { headless: false, forceManualLogin: true }
+            { headless: false, forceManualLogin: true, releaseBrowserOnClose: true }
         );
         if (!session) return { ok: false, error: 'Could not open browser session' };
-        await session.browser.close();
+        await session.close();
+        try {
+            const sync = new SessionSync(appContext.ensureClient());
+            await sync.uploadFromLocal(payload.accountId, platform, username);
+            await appContext.refreshSessionStatuses();
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { ok: false, error: msg };
+        }
+        return { ok: true };
+    },
+
+    async 'campaign:status'() {
+        return appContext.campaignRunner.getStatus();
+    },
+
+    async 'campaign:start'(_e: unknown, payload: { name?: string; maxConcurrency?: number } = {}) {
+        if (appContext.botRunner.getStatus().running) {
+            throw new Error('Stop the single-account bot before starting a campaign');
+        }
+        await appContext.refreshConfig();
+        void appContext.campaignRunner.start(payload);
+        return { ok: true };
+    },
+
+    async 'campaign:stop'() {
+        await appContext.campaignRunner.stop();
         return { ok: true };
     },
 

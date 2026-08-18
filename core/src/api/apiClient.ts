@@ -45,6 +45,59 @@ export interface AssessRelevanceRequest {
     imageData?: { data: string; mimeType: string };
 }
 
+export type AccountSessionStatus = 'needs_login' | 'valid' | 'expired' | 'challenged';
+
+export interface AccountSessionStatusRow {
+    platform_account_id: string;
+    username?: string;
+    status: AccountSessionStatus;
+    last_synced_at: string | null;
+    last_validated_at: string | null;
+}
+
+export interface AccountSessionPayload {
+    platform_account_id: string;
+    status: AccountSessionStatus;
+    storageState: Record<string, unknown> | null;
+    fingerprint: Record<string, unknown> | null;
+    last_synced_at: string | null;
+    last_validated_at: string | null;
+}
+
+export type CampaignStatus = 'draft' | 'running' | 'paused' | 'completed' | 'stopped';
+
+export interface CampaignRecord {
+    id: string;
+    user_id: string;
+    name: string;
+    status: CampaignStatus;
+    max_concurrency: number;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface CampaignProgress {
+    pending: number;
+    running: number;
+    done: number;
+    failed: number;
+    cancelled: number;
+}
+
+export interface CommentJobRecord {
+    id: string;
+    campaign_id: string;
+    platform_account_id: string;
+    platform: number;
+    target_type: 'hashtag' | 'url';
+    target_value: string;
+    post_url: string | null;
+    scheduled_at: string;
+    status: string;
+    attempts: number;
+    error: string | null;
+}
+
 export function resolveAdminApiBaseUrl(): string | null {
     const baseUrl =
         process.env.BUZZBO_ADMIN_API_URL?.trim() ||
@@ -75,15 +128,24 @@ export class AdminApiClient {
         const pass = password ?? this.options.password;
         if (!user || !pass) throw new Error('Username and password required');
 
-        const res = await fetch(`${this.baseUrl}/api/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: user, password: pass }),
-        });
-        const data = (await res.json()) as { error?: string; token?: string };
-        if (!res.ok) throw new Error(data.error || 'Login failed');
-        this.token = data.token!;
-        return data as LoginResponse;
+        try {
+            const res = await fetch(`${this.baseUrl}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: user, password: pass }),
+            });
+            const data = (await res.json()) as { error?: string; token?: string };
+            if (!res.ok) throw new Error(data.error || 'Login failed');
+            this.token = data.token!;
+            return data as LoginResponse;
+        } catch (err) {
+            if (err instanceof TypeError && String(err.message).includes('fetch failed')) {
+                throw new Error(
+                    `Cannot reach Buzzbo Admin at ${this.baseUrl}. Start it in another terminal: npm run dev`
+                );
+            }
+            throw err;
+        }
     }
 
     private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -202,6 +264,120 @@ export class AdminApiClient {
                 method: 'POST',
                 body: JSON.stringify(body),
             }
+        );
+    }
+
+    async listSessionStatuses(): Promise<AccountSessionStatusRow[]> {
+        const data = await this.request<{ statuses: AccountSessionStatusRow[] }>(
+            '/api/bot/accounts/session-status'
+        );
+        return data.statuses;
+    }
+
+    async getAccountSession(accountId: string): Promise<AccountSessionPayload> {
+        return this.request<AccountSessionPayload>(`/api/bot/accounts/${accountId}/session`);
+    }
+
+    async putAccountSession(
+        accountId: string,
+        payload: { storageState: Record<string, unknown>; fingerprint?: Record<string, unknown> }
+    ): Promise<{ platform_account_id: string; status: AccountSessionStatus }> {
+        return this.request(`/api/bot/accounts/${accountId}/session`, {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+        });
+    }
+
+    async patchAccountSessionStatus(
+        accountId: string,
+        status: AccountSessionStatus
+    ): Promise<{ platform_account_id: string; status: AccountSessionStatus }> {
+        return this.request(`/api/bot/accounts/${accountId}/session`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status }),
+        });
+    }
+
+    async createCampaign(opts: { name?: string; maxConcurrency?: number } = {}) {
+        return this.request<{
+            campaign: CampaignRecord;
+            progress: CampaignProgress;
+            jobsCreated: number;
+        }>('/api/bot/campaigns', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: opts.name,
+                maxConcurrency: opts.maxConcurrency,
+            }),
+        });
+    }
+
+    async getCampaign(campaignId: string) {
+        return this.request<{ campaign: CampaignRecord; progress: CampaignProgress }>(
+            `/api/bot/campaigns/${campaignId}`
+        );
+    }
+
+    async listCampaigns() {
+        return this.request<{ campaigns: CampaignRecord[] }>('/api/bot/campaigns');
+    }
+
+    async pauseCampaign(campaignId: string) {
+        return this.request<{ campaign: CampaignRecord; progress: CampaignProgress }>(
+            `/api/bot/campaigns/${campaignId}/pause`,
+            { method: 'POST', body: '{}' }
+        );
+    }
+
+    async resumeCampaign(campaignId: string) {
+        return this.request<{ campaign: CampaignRecord; progress: CampaignProgress }>(
+            `/api/bot/campaigns/${campaignId}/resume`,
+            { method: 'POST', body: '{}' }
+        );
+    }
+
+    async stopCampaign(campaignId: string) {
+        return this.request<{ campaign: CampaignRecord; progress: CampaignProgress }>(
+            `/api/bot/campaigns/${campaignId}/stop`,
+            { method: 'POST', body: '{}' }
+        );
+    }
+
+    async claimCampaignJobs(campaignId: string, limit?: number) {
+        return this.request<{ jobs: CommentJobRecord[] }>(
+            `/api/bot/campaigns/${campaignId}/jobs`,
+            {
+                method: 'POST',
+                body: JSON.stringify({ limit }),
+            }
+        );
+    }
+
+    async completeCampaignJob(
+        campaignId: string,
+        payload: {
+            jobId: string;
+            status: 'done' | 'failed';
+            error?: string;
+            enqueueFollowUp?: boolean;
+        }
+    ) {
+        return this.request<{ job: CommentJobRecord; progress: CampaignProgress }>(
+            `/api/bot/campaigns/${campaignId}/jobs`,
+            {
+                method: 'PATCH',
+                body: JSON.stringify(payload),
+            }
+        );
+    }
+
+    async listCampaignJobs(campaignId: string, opts: { limit?: number; offset?: number } = {}) {
+        const params = new URLSearchParams({
+            limit: String(opts.limit ?? 50),
+            offset: String(opts.offset ?? 0),
+        });
+        return this.request<{ jobs: CommentJobRecord[]; total: number }>(
+            `/api/bot/campaigns/${campaignId}/jobs?${params}`
         );
     }
 }

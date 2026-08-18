@@ -10,6 +10,7 @@ export declare class RemoteAICommentGenerator implements AICommentGeneratorAdapt
     constructor(client: AdminApiClient, options: RemoteAICommentGeneratorOptions);
     supportsVideoAnalysis(): boolean;
     generateInstagramComment(postText: string, targetUsername: string, promptHint?: string, imageUrl?: string, videoUrl?: string, channelSkillsContext?: string, mentionHandle?: string, _overrides?: GenerateCommentOverrides): Promise<string>;
+    generateYouTubeComment(videoTitle: string, channelName: string, promptHint?: string, description?: string, channelSkillsContext?: string, _overrides?: GenerateCommentOverrides): Promise<string>;
     assessSkillsRelevance(postText: string, skillsContext: string, options?: {
         imageUrl?: string;
         videoUrl?: string;

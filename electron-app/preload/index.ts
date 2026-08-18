@@ -45,6 +45,21 @@ const buzzbo = {
     account: {
         sessionStatus: (username: string) => ipcRenderer.invoke('account:session-status', username),
         login: (username: string) => ipcRenderer.invoke('account:login', username),
+        connect: (accountId: string) => ipcRenderer.invoke('account:connect', { accountId }),
+    },
+    sessions: {
+        list: () => ipcRenderer.invoke('accounts:session-statuses'),
+    },
+    campaign: {
+        start: (opts?: { name?: string; maxConcurrency?: number }) =>
+            ipcRenderer.invoke('campaign:start', opts ?? {}),
+        stop: () => ipcRenderer.invoke('campaign:stop'),
+        status: () => ipcRenderer.invoke('campaign:status'),
+        onStatus: (cb: (status: unknown) => void) => {
+            const listener = (_: unknown, data: unknown) => cb(data);
+            ipcRenderer.on('campaign:status', listener);
+            return () => ipcRenderer.removeListener('campaign:status', listener);
+        },
     },
     shell: {
         openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),

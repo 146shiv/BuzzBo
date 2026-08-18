@@ -1,15 +1,30 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { chromium, type Browser } from 'playwright';
+import type { Browser, BrowserContext } from 'playwright';
 import type { AccountConfig, SettingsConfig } from '@buzzbo/core/config';
+import { Platform } from '@buzzbo/core/config';
 import { InstagramBot } from '@buzzbo/instagram-bot';
-import { generateFingerprint } from '@buzzbo/instagram-bot';
+import { YouTubeBot } from '@buzzbo/youtube-bot';
 import type { AICommentGeneratorAdapter } from '@buzzbo/core/ai/genai';
 import type { CommentHistoryAdapter } from '@buzzbo/core/comments';
 import type { UiLogger } from './uiLogger';
-import { getCookiesDir, getFingerprintsDir, getLogsDir } from './paths';
+import { getLogsDir } from './paths';
+import { browserPool } from './browserPool';
+import { resolveSessionFilePath } from './sessionPaths';
+import { getCookiesDir } from './paths';
 
 const pauseState = { shouldPause: false };
+
+export type PlatformBotInstance = InstagramBot | YouTubeBot;
+
+export interface BotSessionHandle {
+    browser: Browser;
+    context: BrowserContext;
+    bot: PlatformBotInstance;
+    close: () => Promise<void>;
+}
+
+function platformLabel(platform: number): string {
+    return platform === Platform.YouTube ? 'YouTube' : 'Instagram';
+}
 
 export async function initializeBotSession(
     account: AccountConfig,
@@ -18,66 +33,65 @@ export async function initializeBotSession(
     commentHistory: CommentHistoryAdapter,
     logger: UiLogger,
     skillsContent?: string,
-    options: { headless?: boolean; forceManualLogin?: boolean } = {}
-): Promise<{ browser: Browser; bot: InstagramBot } | null> {
-    const cookiePath = path.join(getCookiesDir(), `${account.username}.json`);
-    const fingerprintPath = path.join(getFingerprintsDir(), `${account.username}.json`);
-
-    let fingerprint;
-    if (fs.existsSync(fingerprintPath)) {
-        fingerprint = JSON.parse(fs.readFileSync(fingerprintPath, 'utf-8'));
-    } else {
-        fingerprint = generateFingerprint();
-        fs.writeFileSync(fingerprintPath, JSON.stringify(fingerprint, null, 2));
-    }
-
+    options: {
+        headless?: boolean;
+        forceManualLogin?: boolean;
+        storageState?: Record<string, unknown>;
+        releaseBrowserOnClose?: boolean;
+    } = {}
+): Promise<BotSessionHandle | null> {
     const loginMethod = account.loginMethod ?? 'manual';
     const useManualLogin = options.forceManualLogin ?? loginMethod === 'manual';
     const headless = useManualLogin ? false : (options.headless ?? settings.headless);
-    const browserChannel = settings.browserChannel ?? 'chrome';
-    const browserViewport = settings.browserViewport ?? { width: 1440, height: 900 };
+    const releaseBrowserOnClose = options.releaseBrowserOnClose ?? false;
+    const cookiePath = resolveSessionFilePath(
+        getCookiesDir(),
+        account.platform ?? Platform.Instagram,
+        account.username
+    );
+    const label = platformLabel(account.platform ?? Platform.Instagram);
 
-    const launchOptions: Parameters<typeof chromium.launch>[0] = {
-        headless,
-        args: [
-            '--autoplay-policy=no-user-gesture-required',
-            `--window-size=${browserViewport.width},${browserViewport.height}`,
-        ],
-    };
-    if (browserChannel !== 'chromium') {
-        launchOptions.channel = browserChannel;
-    }
-
-    const browser = await chromium.launch(launchOptions);
+    let context: BrowserContext | null = null;
     try {
-        const context = await browser.newContext({
-            storageState: fs.existsSync(cookiePath) ? cookiePath : undefined,
-            userAgent: fingerprint.userAgent,
-            viewport: browserViewport,
-            locale: fingerprint.locale,
-            timezoneId: fingerprint.timezoneId,
-            colorScheme: fingerprint.colorScheme,
-            reducedMotion: fingerprint.reducedMotion,
+        context = await browserPool.createAccountContext(account, settings, {
+            headless,
+            storageState: options.storageState,
         });
 
-        const bot = new InstagramBot(
-            account,
-            settings,
-            pauseState,
-            logger as unknown as import('@buzzbo/core/logger/logger').Logger,
-            aiGenerator,
-            commentHistory,
-            skillsContent,
-            {
-                cookiePath,
-                logsDir: getLogsDir(),
-                enableCsvLog: settings.developerMode,
-            }
-        );
+        const runtimePaths = {
+            cookiePath,
+            logsDir: getLogsDir(),
+            enableCsvLog: settings.developerMode,
+        };
+        const coreLogger = logger as unknown as import('@buzzbo/core/logger/logger').Logger;
 
+        const bot: PlatformBotInstance =
+            (account.platform ?? Platform.Instagram) === Platform.YouTube
+                ? new YouTubeBot(
+                      account,
+                      settings,
+                      pauseState,
+                      coreLogger,
+                      aiGenerator,
+                      commentHistory,
+                      skillsContent,
+                      runtimePaths
+                  )
+                : new InstagramBot(
+                      account,
+                      settings,
+                      pauseState,
+                      coreLogger,
+                      aiGenerator,
+                      commentHistory,
+                      skillsContent,
+                      runtimePaths
+                  );
+
+        let loggedIn: boolean;
         if (useManualLogin) {
-            await bot.initWithManualLogin(context, async () => {
-                logger.info('Complete Instagram login in the browser window.');
+            loggedIn = await bot.initWithManualLogin(context, async () => {
+                logger.info(`Complete ${label} login in the browser window.`);
                 const maxWaitMs = 10 * 60 * 1000;
                 const started = Date.now();
                 while (Date.now() - started < maxWaitMs) {
@@ -85,15 +99,46 @@ export async function initializeBotSession(
                 }
             });
         } else {
-            await bot.init(context);
+            loggedIn = await bot.init(context);
         }
 
-        await context.storageState({ path: cookiePath });
-        return { browser, bot };
+        if ((account.platform ?? Platform.Instagram) === Platform.YouTube && !loggedIn) {
+            throw new Error('YouTube session is not logged in. Use Connect YouTube first.');
+        }
+
+        await browserPool.persistContextState(account, context);
+        const browser = await browserPool.acquire(settings);
+
+        return {
+            browser,
+            context,
+            bot,
+            close: async () => {
+                try {
+                    await browserPool.persistContextState(account, context!);
+                } catch {
+                    /* ignore */
+                }
+                try {
+                    await context!.close();
+                } catch {
+                    /* ignore */
+                }
+                if (releaseBrowserOnClose) {
+                    await browserPool.release();
+                }
+            },
+        };
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : String(error);
         logger.error(`Bot initialization failed: ${msg}`);
-        await browser.close();
+        if (context) {
+            try {
+                await context.close();
+            } catch {
+                /* ignore */
+            }
+        }
         return null;
     }
 }

@@ -309,6 +309,55 @@ class AICommentGenerator {
             throw new Error(`Failed to generate comment for @${targetUsername} using ${this.provider}.`);
         }
     }
+    buildYouTubePrompt(videoTitle, channelName, promptHint, description, channelSkillsContext) {
+        const sections = [
+            `Write one YouTube comment on a video by ${channelName}.`,
+            '',
+            '## Video title',
+            videoTitle.trim() || '(no title)',
+        ];
+        const desc = description?.trim();
+        if (desc) {
+            sections.push('', '## Video description (excerpt)', desc.slice(0, 800));
+        }
+        sections.push('', '## Context rule', 'Ground the comment in the video title and description. Do not write a generic comment detached from this video.');
+        const skills = channelSkillsContext?.trim();
+        if (skills) {
+            sections.push('', '## Style guide', skills);
+        }
+        if (promptHint?.trim()) {
+            sections.push('', '## Extra hint', promptHint.trim());
+        }
+        sections.push('', '## Output', 'Return only the comment text. No quotes, labels, numbering, or explanation.', 'Be conversational and relevant to the video topic.', 'Do NOT use Instagram-style @mentions unless explicitly requested in the style guide.', 'NEVER say you lack context or ask for more information.');
+        return sections.join('\n');
+    }
+    async generateYouTubeComment(videoTitle, channelName, promptHint, description, channelSkillsContext, overrides) {
+        if (this.mockComments) {
+            const comment = this.generateMockComment(videoTitle, channelName);
+            console.log(`[AI_MOCK] Using mock YouTube comment for ${channelName}: "${comment}"`);
+            return comment;
+        }
+        const promptText = this.buildYouTubePrompt(videoTitle, channelName, promptHint, description, channelSkillsContext);
+        try {
+            switch (this.provider) {
+                case 'gemini':
+                    return await this.generateWithGemini(promptText, null, null, channelName);
+                case 'groq':
+                    return await this.generateWithOpenAiCompatible('groq', 'https://api.groq.com/openai/v1', this.groqApiKey, this.groqModel, this.buildOpenAiMessages(promptText, null), channelName);
+                case 'local':
+                    return await this.generateWithOpenAiCompatible('local', this.localLlmBaseUrl, undefined, this.localLlmModel, this.buildOpenAiMessages(promptText, null), channelName);
+                default:
+                    throw new Error(`Unsupported AI provider: ${this.provider}`);
+            }
+        }
+        catch (error) {
+            console.error(`[AI_ERROR] ${this.provider} YouTube request failed:`, error);
+            if (overrides?.preserveErrorMessage && error instanceof Error) {
+                throw error;
+            }
+            throw new Error(`Failed to generate YouTube comment for ${channelName} using ${this.provider}.`);
+        }
+    }
     buildRelevancePrompt(postText, skillsContext, authorUsername, hasMedia = false) {
         const sections = [
             'Decide if an Instagram post/reel is a good match for commenting using the channel skills below.',
@@ -325,7 +374,7 @@ class AICommentGenerator {
         sections.push('', '## Channel skills (topics, voice, niche)', skillsContext.trim() || '(no skills defined — treat as low relevance)', '', '## Rules', '- relevant=true only when the post topic clearly overlaps the skills niche (topics, pain points, audience).', '- Generic lifestyle, unrelated humor, or off-niche content → relevant=false.', '- score is 0.0–1.0 confidence that a contextual promotional comment fits.', '', '## Output', 'Return ONLY valid JSON with keys: relevant (boolean), score (number 0-1), reason (short string).', 'Example: {"relevant":true,"score":0.82,"reason":"Exam stress and procrastination match study-app skills"}');
         return sections.join('\n');
     }
-    async callLlmRawText(promptText, imageData, videoData) {
+    async callLlmRawText(promptText, imageData, videoData, options) {
         switch (this.provider) {
             case 'gemini': {
                 const contents = [];
@@ -350,26 +399,36 @@ class AICommentGenerator {
                 return (result.text ?? '').trim();
             }
             case 'groq':
-                return this.callOpenAiCompatibleRaw('groq', 'https://api.groq.com/openai/v1', this.groqApiKey, imageData ? this.groqVisionModel : this.groqModel, this.buildOpenAiMessages(promptText, imageData));
+                return this.callOpenAiCompatibleRaw('groq', 'https://api.groq.com/openai/v1', this.groqApiKey, imageData && !options?.jsonMode ? this.groqVisionModel : this.groqModel, this.buildOpenAiMessages(promptText, options?.jsonMode ? null : imageData), options);
             case 'local':
-                return this.callOpenAiCompatibleRaw('local', this.localLlmBaseUrl, undefined, this.localLlmModel, this.buildOpenAiMessages(promptText, imageData));
+                return this.callOpenAiCompatibleRaw('local', this.localLlmBaseUrl, undefined, this.localLlmModel, this.buildOpenAiMessages(promptText, options?.jsonMode ? null : imageData), options);
             default:
                 throw new Error(`Unsupported AI provider: ${this.provider}`);
         }
     }
-    async callOpenAiCompatibleRaw(providerLabel, apiUrl, apiKey, model, messages) {
+    async callOpenAiCompatibleRaw(providerLabel, apiUrl, apiKey, model, messages, options) {
         await this.rateLimiter.acquire();
         const headers = { 'Content-Type': 'application/json' };
         if (apiKey)
             headers.Authorization = `Bearer ${apiKey}`;
+        const requestMessages = options?.jsonMode
+            ? [
+                {
+                    role: 'system',
+                    content: 'Reply with a single JSON object only. No markdown or extra text.',
+                },
+                ...messages,
+            ]
+            : messages;
         const response = await fetch(`${apiUrl}/chat/completions`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
                 model,
-                messages,
+                messages: requestMessages,
                 temperature: 0.2,
-                max_tokens: 120,
+                max_tokens: options?.jsonMode ? 150 : 120,
+                ...(options?.jsonMode ? { response_format: { type: 'json_object' } } : {}),
             }),
         });
         if (!response.ok) {
@@ -398,14 +457,26 @@ class AICommentGenerator {
             videoData = await this.fetchVideoAsBase64(options.videoUrl);
             hasMedia = Boolean(videoData);
         }
-        else if (!imageData && options?.imageUrl) {
+        else if (!imageData && options?.imageUrl && this.provider !== 'groq') {
             imageData = await fetchImageAsBase64ForComment(options.imageUrl);
             hasMedia = Boolean(imageData);
         }
+        // Groq vision model often ignores JSON instructions on reel posters; caption is enough.
+        if (this.provider === 'groq') {
+            imageData = null;
+            videoData = null;
+            hasMedia = false;
+        }
         const promptText = this.buildRelevancePrompt(postText, skills, options?.authorUsername, hasMedia);
         try {
-            const raw = await this.callLlmRawText(promptText, imageData, videoData);
-            return parseSkillsRelevanceResponse(raw);
+            const raw = await this.callLlmRawText(promptText, imageData, videoData, { jsonMode: true });
+            const assessment = parseSkillsRelevanceResponse(raw);
+            if (assessment.score === 0 &&
+                (assessment.reason === 'Could not parse AI relevance response' ||
+                    assessment.reason === 'Invalid JSON from relevance assessment')) {
+                console.warn(`[AI_WARN] Relevance parse failed; raw: ${raw.slice(0, 240)}`);
+            }
+            return assessment;
         }
         catch (error) {
             console.error(`[AI_ERROR] Relevance assessment failed:`, error);
@@ -515,7 +586,11 @@ function hasActionablePostContext(postText, imageUrl, videoUrl, videoAnalysisAva
     return substantiveCaption;
 }
 function parseSkillsRelevanceResponse(raw) {
-    const trimmed = raw.trim();
+    let trimmed = raw.trim();
+    const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenceMatch) {
+        trimmed = fenceMatch[1].trim();
+    }
     const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
         return { relevant: false, score: 0, reason: 'Could not parse AI relevance response' };

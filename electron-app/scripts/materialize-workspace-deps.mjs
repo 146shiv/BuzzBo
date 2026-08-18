@@ -40,4 +40,5 @@ function materialize(relPath, bundleDir = 'dist') {
 mkdirSync(buzzboDir, { recursive: true });
 materialize('core');
 materialize('instagram-bot');
+materialize('youtube-bot');
 materialize('packages/ui', 'src');

@@ -23,6 +23,7 @@
   "dependencies": {
     "@buzzbo/core": "1.0.0",
     "@buzzbo/instagram-bot": "1.0.0",
+    "@buzzbo/youtube-bot": "1.0.0",
     "@buzzbo/ui": "1.0.0",
     "@base-ui/react": "^1.6.0",
     "@fontsource/jetbrains-mono": "^5.2.5",

@@ -1,9 +1,17 @@
 import type {
     DashboardStats,
+    DbAccountSession,
+    DbCampaign,
     DbCommentedPost,
+    DbCommentJob,
     DbConfiguration,
     DbPlatformAccount,
     DbUser,
+    AccountSessionPublic,
+    AccountSessionStatus,
+    CampaignProgress,
+    CampaignStatus,
+    CommentJobStatus,
     Platform,
     UserPublic,
     UserRole,
@@ -110,10 +118,67 @@ export interface CommentHistoryRepository {
     countAll(): Promise<number>;
 }
 
+export interface UpsertAccountSessionInput {
+    platform_account_id: string;
+    storage_state_encrypted?: string | null;
+    fingerprint_json?: Record<string, unknown>;
+    status?: AccountSessionStatus;
+    last_synced_at?: string | null;
+    last_validated_at?: string | null;
+}
+
+export interface AccountSessionRepository {
+    findByAccountId(accountId: string): Promise<DbAccountSession | null>;
+    upsert(input: UpsertAccountSessionInput): Promise<DbAccountSession>;
+    updateStatus(accountId: string, status: AccountSessionStatus): Promise<DbAccountSession>;
+    listStatusesByUserId(userId: string): Promise<AccountSessionPublic[]>;
+}
+
+export interface CreateCampaignInput {
+    user_id: string;
+    name?: string;
+    max_concurrency?: number;
+}
+
+export interface CreateCommentJobInput {
+    campaign_id: string;
+    platform_account_id: string;
+    platform: Platform;
+    target_type: 'hashtag' | 'url';
+    target_value: string;
+    post_url?: string | null;
+    scheduled_at: string;
+}
+
+export interface CampaignRepository {
+    findById(id: string): Promise<DbCampaign | null>;
+    create(input: CreateCampaignInput): Promise<DbCampaign>;
+    updateStatus(id: string, status: CampaignStatus): Promise<DbCampaign>;
+    listByUserId(userId: string): Promise<DbCampaign[]>;
+    getProgress(campaignId: string): Promise<CampaignProgress>;
+}
+
+export interface CommentJobRepository {
+    createMany(jobs: CreateCommentJobInput[]): Promise<DbCommentJob[]>;
+    claimDueJobs(campaignId: string, limit: number): Promise<DbCommentJob[]>;
+    updateJob(
+        id: string,
+        patch: Partial<Pick<DbCommentJob, 'status' | 'error' | 'attempts' | 'post_url' | 'scheduled_at'>>
+    ): Promise<DbCommentJob>;
+    listByCampaign(
+        campaignId: string,
+        opts?: { limit?: number; offset?: number }
+    ): Promise<{ jobs: DbCommentJob[]; total: number }>;
+    cancelPending(campaignId: string): Promise<number>;
+}
+
 export interface Repositories {
     users: UserRepository;
     configurations: ConfigurationRepository;
     platformAccounts: PlatformAccountRepository;
     comments: CommentHistoryRepository;
+    accountSessions: AccountSessionRepository;
+    campaigns: CampaignRepository;
+    commentJobs: CommentJobRepository;
     getStats(): Promise<DashboardStats>;
 }

@@ -32,6 +32,7 @@ export interface AssessSkillsRelevanceOptions {
 export interface AICommentGeneratorAdapter {
     supportsVideoAnalysis(): boolean;
     generateInstagramComment(postText: string, targetUsername: string, promptHint?: string, imageUrl?: string, videoUrl?: string, channelSkillsContext?: string, mentionHandle?: string, overrides?: GenerateCommentOverrides): Promise<string>;
+    generateYouTubeComment(videoTitle: string, channelName: string, promptHint?: string, description?: string, channelSkillsContext?: string, overrides?: GenerateCommentOverrides): Promise<string>;
     assessSkillsRelevance(postText: string, skillsContext: string, options?: AssessSkillsRelevanceOptions): Promise<SkillsRelevanceAssessment>;
 }
 export declare function fetchImageAsBase64ForComment(imageUrl: string): Promise<MediaPayload | null>;
@@ -59,6 +60,8 @@ export declare class AICommentGenerator implements AICommentGeneratorAdapter {
     private generateWithOpenAiCompatible;
     supportsVideoAnalysis(): boolean;
     generateInstagramComment(postText: string, targetUsername: string, promptHint?: string, imageUrl?: string, videoUrl?: string, channelSkillsContext?: string, mentionHandle?: string, overrides?: GenerateCommentOverrides): Promise<string>;
+    private buildYouTubePrompt;
+    generateYouTubeComment(videoTitle: string, channelName: string, promptHint?: string, description?: string, channelSkillsContext?: string, overrides?: GenerateCommentOverrides): Promise<string>;
     private buildRelevancePrompt;
     private callLlmRawText;
     private callOpenAiCompatibleRaw;
