@@ -19,7 +19,7 @@ export async function loadConfigFromApi(client: AdminApiClient): Promise<LoadedC
             ...(DEFAULT_SETTINGS.feedBrowse ?? {
                 maxItemsToScan: 30,
                 maxCommentsPerRun: 5,
-                minRelevanceScore: 0.55,
+                minRelevanceScore: 0.35,
                 watchItemSeconds: { min: 3, max: 8 },
                 surfaces: ['reels', 'home'],
             }),

@@ -10,7 +10,7 @@ export interface ResolvedAccountSettings {
 const FALLBACK_FEED_BROWSE: FeedBrowseConfig = {
     maxItemsToScan: 30,
     maxCommentsPerRun: 5,
-    minRelevanceScore: 0.55,
+    minRelevanceScore: 0.35,
     watchItemSeconds: { min: 3, max: 8 },
     surfaces: ['reels', 'home'],
 };

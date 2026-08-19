@@ -192,13 +192,13 @@ export function GlobalSettingsPanel({
                                 />
                             </Field>
                             <div className="grid gap-4 sm:grid-cols-2">
-                                <Field label="Groq Model">
+                                <Field label="Groq Model" hint="e.g. openai/gpt-oss-20b (fast) or openai/gpt-oss-120b (quality)">
                                     <Input
                                         value={settings.groqModel}
                                         onChange={e => patch({ groqModel: e.target.value })}
                                     />
                                 </Field>
-                                <Field label="Groq Vision Model">
+                                <Field label="Groq Vision Model" hint="e.g. openai/gpt-oss-120b for image posts">
                                     <Input
                                         value={settings.groqVisionModel}
                                         onChange={e => patch({ groqVisionModel: e.target.value })}

@@ -35,7 +35,7 @@ function AccountSettingsPanel({ group, account, onChange, }) {
                                             surfaces: feedBrowseSurfaces,
                                             maxItemsToScan: Number(feedBrowseDraft.maxItemsToScan ?? 30),
                                             maxCommentsPerRun: Number(feedBrowseDraft.maxCommentsPerRun ?? 5),
-                                            minRelevanceScore: Number(feedBrowseDraft.minRelevanceScore ?? 0.55),
+                                            minRelevanceScore: Number(feedBrowseDraft.minRelevanceScore ?? 0.35),
                                         },
                                     });
                                 }
@@ -70,7 +70,7 @@ function AccountSettingsPanel({ group, account, onChange, }) {
                                                     } }), opt.label] }, opt.value));
                                     }) }) }), (0, jsx_runtime_1.jsx)(fields_1.Field, { label: "Max items to scan (override)", children: (0, jsx_runtime_1.jsx)(fields_1.NumberInput, { value: Number(config.feedBrowse?.maxItemsToScan ?? 30), onChange: v => patchFeedBrowse({ maxItemsToScan: v }) }) }), (0, jsx_runtime_1.jsx)(fields_1.Field, { label: "Max comments per run (override)", children: (0, jsx_runtime_1.jsx)(fields_1.NumberInput, { value: Number(config.feedBrowse?.maxCommentsPerRun ??
                                         5), onChange: v => patchFeedBrowse({ maxCommentsPerRun: v }) }) }), (0, jsx_runtime_1.jsx)(fields_1.Field, { label: "Min relevance score (0\u20131, override)", hint: "Skip items below this AI match score", children: (0, jsx_runtime_1.jsx)(fields_1.NumberInput, { value: Number(config.feedBrowse?.minRelevanceScore ??
-                                        0.55), onChange: v => patchFeedBrowse({ minRelevanceScore: v }) }) })] }))] }));
+                                        0.35), onChange: v => patchFeedBrowse({ minRelevanceScore: v }) }) })] }))] }));
         case 'mentions':
             return ((0, jsx_runtime_1.jsxs)("div", { className: "space-y-4", children: [(0, jsx_runtime_1.jsx)(fields_1.Field, { label: "Mention Username", children: (0, jsx_runtime_1.jsx)(fields_1.Input, { value: String(config.mentionUsername || ''), onChange: e => patchConfig({ mentionUsername: e.target.value }) }) }), (0, jsx_runtime_1.jsx)(fields_1.Field, { label: "Mention Policy", children: (0, jsx_runtime_1.jsx)(fields_1.LabeledSelect, { options: select_options_1.MENTION_POLICY_OPTIONS, value: String(config.mentionPolicy || 'ai_only'), onValueChange: v => patchConfig({ mentionPolicy: v }) }) })] }));
         case 'ai-config':

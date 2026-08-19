@@ -18,6 +18,7 @@ import {
     AICommentGeneratorAdapter,
     getGenericStudyFallbackComment,
     hasActionablePostContext,
+    isRelevanceAssessmentFailure,
     isSkillsRelevanceMatch,
     isUnusableAiComment,
 } from '@buzzbo/core/ai/genai';
@@ -2352,9 +2353,16 @@ export class InstagramBot {
             `Relevance score ${assessment.score.toFixed(2)} — ${assessment.reason}`
         );
 
+        if (isRelevanceAssessmentFailure(assessment)) {
+            this.logger.warn(
+                `Skipping @${context.authorUsername} ${context.shortcode} — relevance check failed (${assessment.reason}).`
+            );
+            return 'SKIPPED';
+        }
+
         if (!isSkillsRelevanceMatch(assessment, config.minRelevanceScore)) {
             this.logger.info(
-                `Skipping @${context.authorUsername} ${context.shortcode} — below relevance threshold (${config.minRelevanceScore}).`
+                `Skipping @${context.authorUsername} ${context.shortcode} — score ${assessment.score.toFixed(2)} below threshold (${config.minRelevanceScore}).`
             );
             return 'SKIPPED';
         }

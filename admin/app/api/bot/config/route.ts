@@ -28,7 +28,8 @@ export async function GET(request: Request) {
         const botConfig = botConfigFromDb(sanitizeBotSettings(settings), enabledAccounts);
         return NextResponse.json(botConfig);
     } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Failed to load config';
         console.error('Bot config error:', e);
-        return NextResponse.json({ error: 'Failed to load config' }, { status: 500 });
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }

@@ -22,15 +22,24 @@ export function encryptSecret(plaintext: string): string {
 
 export function decryptSecret(ciphertext: string): string {
     if (!ciphertext || !ciphertext.startsWith(PREFIX)) return ciphertext;
-    const key = getKey();
-    const payload = ciphertext.slice(PREFIX.length);
-    const [ivB64, tagB64, dataB64] = payload.split(':');
-    const iv = Buffer.from(ivB64, 'base64');
-    const tag = Buffer.from(tagB64, 'base64');
-    const data = Buffer.from(dataB64, 'base64');
-    const decipher = createDecipheriv(ALGORITHM, key, iv);
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+    try {
+        const key = getKey();
+        const payload = ciphertext.slice(PREFIX.length);
+        const [ivB64, tagB64, dataB64] = payload.split(':');
+        if (!ivB64 || !tagB64 || !dataB64) return ciphertext;
+        const iv = Buffer.from(ivB64, 'base64');
+        const tag = Buffer.from(tagB64, 'base64');
+        const data = Buffer.from(dataB64, 'base64');
+        const decipher = createDecipheriv(ALGORITHM, key, iv);
+        decipher.setAuthTag(tag);
+        return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+    } catch (err) {
+        console.warn(
+            '[crypto] Failed to decrypt secret — ENCRYPTION_KEY may differ from the key used when data was saved:',
+            err instanceof Error ? err.message : err
+        );
+        return '';
+    }
 }
 
 const SECRET_KEYS = ['password', 'instagramApiAccessToken', 'groqApiKey', 'googleAiApiKey'] as const;

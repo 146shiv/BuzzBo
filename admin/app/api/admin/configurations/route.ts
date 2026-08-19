@@ -12,8 +12,9 @@ export async function GET(request: Request) {
         const configs = await getRepositories().configurations.list();
         return NextResponse.json(configs);
     } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Failed to list configurations';
         console.error('List configs error:', e);
-        return NextResponse.json({ error: 'Failed to list configurations' }, { status: 500 });
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }
 

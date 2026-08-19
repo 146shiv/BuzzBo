@@ -16,8 +16,9 @@ export async function GET(_request: Request, { params }: Params) {
         const accounts = await getRepositories().platformAccounts.listByUserId(userId);
         return NextResponse.json(accounts);
     } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Failed to list accounts';
         console.error('List accounts error:', e);
-        return NextResponse.json({ error: 'Failed to list accounts' }, { status: 500 });
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }
 

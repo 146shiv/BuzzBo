@@ -1895,8 +1895,12 @@ class InstagramBot {
             authorUsername: context.authorUsername,
         });
         this.logger.info(`Relevance score ${assessment.score.toFixed(2)} — ${assessment.reason}`);
+        if ((0, genai_1.isRelevanceAssessmentFailure)(assessment)) {
+            this.logger.warn(`Skipping @${context.authorUsername} ${context.shortcode} — relevance check failed (${assessment.reason}).`);
+            return 'SKIPPED';
+        }
         if (!(0, genai_1.isSkillsRelevanceMatch)(assessment, config.minRelevanceScore)) {
-            this.logger.info(`Skipping @${context.authorUsername} ${context.shortcode} — below relevance threshold (${config.minRelevanceScore}).`);
+            this.logger.info(`Skipping @${context.authorUsername} ${context.shortcode} — score ${assessment.score.toFixed(2)} below threshold (${config.minRelevanceScore}).`);
             return 'SKIPPED';
         }
         const postRoot = await this.getPostRootLocator();
