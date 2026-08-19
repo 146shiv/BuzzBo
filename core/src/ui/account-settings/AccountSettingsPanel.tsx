@@ -100,7 +100,7 @@ export function AccountSettingsPanel({
                                             surfaces: feedBrowseSurfaces,
                                             maxItemsToScan: Number(feedBrowseDraft.maxItemsToScan ?? 30),
                                             maxCommentsPerRun: Number(feedBrowseDraft.maxCommentsPerRun ?? 5),
-                                            minRelevanceScore: Number(feedBrowseDraft.minRelevanceScore ?? 0.55),
+                                            minRelevanceScore: Number(feedBrowseDraft.minRelevanceScore ?? 0.35),
                                         },
                                     });
                                 } else {
@@ -225,7 +225,7 @@ export function AccountSettingsPanel({
                                 <NumberInput
                                     value={Number(
                                         (config.feedBrowse as { minRelevanceScore?: number })?.minRelevanceScore ??
-                                            0.55
+                                            0.35
                                     )}
                                     onChange={v => patchFeedBrowse({ minRelevanceScore: v })}
                                 />

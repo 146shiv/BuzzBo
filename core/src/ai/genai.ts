@@ -164,9 +164,9 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
         this.provider = options.provider;
         this.mockComments = options.mockComments ?? false;
         this.googleAiApiKey = options.googleAiApiKey ?? '';
-        this.groqApiKey = options.groqApiKey ?? '';
-        this.groqModel = options.groqModel ?? 'llama-3.3-70b-versatile';
-        this.groqVisionModel = options.groqVisionModel ?? 'meta-llama/llama-4-scout-17b-16e-instruct';
+        this.groqApiKey = options.groqApiKey?.trim() ?? '';
+        this.groqModel = (options.groqModel ?? 'openai/gpt-oss-20b').trim();
+        this.groqVisionModel = (options.groqVisionModel ?? 'openai/gpt-oss-120b').trim();
         this.localLlmBaseUrl = (options.localLlmBaseUrl ?? 'http://localhost:11434/v1').replace(/\/$/, '');
         this.localLlmModel = options.localLlmModel ?? 'llama3.2';
         this.rateLimiter = new AiRateLimiter(options.maxRequestsPerMinute ?? 15);
@@ -603,36 +603,56 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
         postText: string,
         skillsContext: string,
         authorUsername?: string,
-        hasMedia = false
+        hasMedia = false,
+        compact = false
     ): string {
+        const caption = (postText.trim() || '(no caption)').slice(0, compact ? 400 : 800);
+        const skillsExcerpt = skillsContext.trim().slice(0, compact ? 500 : 1000);
+
+        if (compact) {
+            return [
+                'Score how well this Instagram post fits the channel niche for a contextual promotional comment.',
+                '',
+                `Caption: ${caption}`,
+                authorUsername ? `Author: @${authorUsername}` : '',
+                `Channel niche: ${skillsExcerpt}`,
+                '',
+                'Output ONLY a JSON object with keys relevant (boolean), score (number 0-1), reason (string).',
+                'Example: {"relevant":true,"score":0.72,"reason":"Exam prep and study routine content"}',
+            ]
+                .filter(Boolean)
+                .join('\n');
+        }
+
         const sections = [
-            'Decide if an Instagram post/reel is a good match for commenting using the channel skills below.',
+            'Score how well this Instagram post/reel fits the channel niche for leaving a promotional comment.',
             '',
-            '## Post caption',
-            postText.trim() || '(no caption — infer topic from attached media if present)',
+            'Caption:',
+            caption,
         ];
 
         if (authorUsername) {
-            sections.push('', '## Author', `@${authorUsername}`);
+            sections.push('', `Author: @${authorUsername}`);
         }
 
         if (hasMedia) {
-            sections.push('', 'Media is attached — consider visual topic as well as caption.');
+            sections.push('', 'Note: media is attached — consider visual topic as well as caption.');
         }
 
         sections.push(
             '',
-            '## Channel skills (topics, voice, niche)',
-            skillsContext.trim() || '(no skills defined — treat as low relevance)',
+            'Channel niche (excerpt):',
+            skillsExcerpt,
             '',
-            '## Rules',
-            '- relevant=true only when the post topic clearly overlaps the skills niche (topics, pain points, audience).',
-            '- Generic lifestyle, unrelated humor, or off-niche content → relevant=false.',
-            '- score is 0.0–1.0 confidence that a contextual promotional comment fits.',
+            'Rules:',
+            '- score 0.0–1.0 = fit for a contextual promotional comment',
+            '- score >= 0.5 = clear niche match (study, exams, productivity, student life)',
+            '- score 0.35–0.49 = adjacent (motivation, discipline, young adult routines)',
+            '- score < 0.2 = off-niche',
+            '- relevant=true when score >= 0.35',
             '',
-            '## Output',
-            'Return ONLY valid JSON with keys: relevant (boolean), score (number 0-1), reason (short string).',
-            'Example: {"relevant":true,"score":0.82,"reason":"Exam stress and procrastination match study-app skills"}'
+            'Output ONLY JSON, no other text:',
+            '{"relevant":true,"score":0.82,"reason":"short reason"}'
         );
 
         return sections.join('\n');
@@ -697,31 +717,49 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
         messages: OpenAiChatMessage[],
         options?: { jsonMode?: boolean }
     ): Promise<string> {
-        await this.rateLimiter.acquire();
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+        const attempt = async (useJsonMode: boolean): Promise<Response> => {
+            await this.rateLimiter.acquire();
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-        const requestMessages: OpenAiChatMessage[] = options?.jsonMode
-            ? [
-                  {
-                      role: 'system',
-                      content: 'Reply with a single JSON object only. No markdown or extra text.',
-                  },
-                  ...messages,
-              ]
-            : messages;
+            const requestMessages: OpenAiChatMessage[] = useJsonMode
+                ? [
+                      {
+                          role: 'system',
+                          content:
+                              'Reply with a single JSON object only. No markdown or extra text.',
+                      },
+                      ...messages,
+                  ]
+                : messages;
 
-        const response = await fetch(`${apiUrl}/chat/completions`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                model,
-                messages: requestMessages,
-                temperature: 0.2,
-                max_tokens: options?.jsonMode ? 150 : 120,
-                ...(options?.jsonMode ? { response_format: { type: 'json_object' } } : {}),
-            }),
-        });
+            return fetch(`${apiUrl}/chat/completions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    model,
+                    messages: requestMessages,
+                    temperature: 0.2,
+                    max_tokens: useJsonMode ? 150 : 220,
+                    ...(useJsonMode ? { response_format: { type: 'json_object' } } : {}),
+                }),
+            });
+        };
+
+        let response = await attempt(Boolean(options?.jsonMode));
+        if (!response.ok && options?.jsonMode) {
+            const errorBody = await response.text();
+            if (errorBody.includes('json_validate_failed')) {
+                console.warn(
+                    `[AI_WARN] ${providerLabel} JSON mode failed for ${model}; retrying without response_format`
+                );
+                response = await attempt(false);
+            } else {
+                throw new Error(
+                    `${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`
+                );
+            }
+        }
 
         if (!response.ok) {
             const errorBody = await response.text();
@@ -779,15 +817,35 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
         );
 
         try {
-            const raw = await this.callLlmRawText(promptText, imageData, videoData, { jsonMode: true });
-            const assessment = parseSkillsRelevanceResponse(raw);
+            // Groq gpt-oss models often reject strict json_object mode; prompt + parser is more reliable.
+            const useJsonMode = this.provider !== 'groq';
+            let raw = await this.callLlmRawText(promptText, imageData, videoData, {
+                jsonMode: useJsonMode,
+            });
+            let assessment = parseSkillsRelevanceResponse(raw);
+
             if (
-                assessment.score === 0 &&
-                (assessment.reason === 'Could not parse AI relevance response' ||
-                    assessment.reason === 'Invalid JSON from relevance assessment')
+                assessment.reason === 'Could not parse AI relevance response' ||
+                assessment.reason === 'Invalid JSON from relevance assessment'
             ) {
                 console.warn(`[AI_WARN] Relevance parse failed; raw: ${raw.slice(0, 240)}`);
+                const compactPrompt = this.buildRelevancePrompt(
+                    postText,
+                    skills,
+                    options?.authorUsername,
+                    hasMedia,
+                    true
+                );
+                raw = await this.callLlmRawText(compactPrompt, null, null, { jsonMode: false });
+                assessment = parseSkillsRelevanceResponse(raw);
+                if (
+                    assessment.reason === 'Could not parse AI relevance response' ||
+                    assessment.reason === 'Invalid JSON from relevance assessment'
+                ) {
+                    console.warn(`[AI_WARN] Relevance compact retry failed; raw: ${raw.slice(0, 240)}`);
+                }
             }
+
             return assessment;
         } catch (error) {
             console.error(`[AI_ERROR] Relevance assessment failed:`, error);
@@ -918,37 +976,81 @@ export function hasActionablePostContext(
 
 export function parseSkillsRelevanceResponse(raw: string): SkillsRelevanceAssessment {
     let trimmed = raw.trim();
+    if (!trimmed) {
+        return { relevant: false, score: 0, reason: 'Could not parse AI relevance response' };
+    }
+
     const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
     if (fenceMatch) {
         trimmed = fenceMatch[1].trim();
     }
     const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-        return { relevant: false, score: 0, reason: 'Could not parse AI relevance response' };
+    if (jsonMatch) {
+        try {
+            const parsed = JSON.parse(jsonMatch[0]) as {
+                relevant?: boolean;
+                score?: number;
+                reason?: string;
+            };
+            const score =
+                typeof parsed.score === 'number' ? Math.min(1, Math.max(0, parsed.score)) : 0;
+            const relevant = score >= 0.35;
+            return {
+                relevant,
+                score,
+                reason: String(parsed.reason ?? '').trim() || 'No reason provided',
+            };
+        } catch {
+            // fall through to loose parsing
+        }
     }
 
-    try {
-        const parsed = JSON.parse(jsonMatch[0]) as {
-            relevant?: boolean;
-            score?: number;
-            reason?: string;
-        };
-        const score =
-            typeof parsed.score === 'number' ? Math.min(1, Math.max(0, parsed.score)) : 0;
-        const relevant = Boolean(parsed.relevant) && score >= 0.35;
-        return {
-            relevant,
-            score,
-            reason: String(parsed.reason ?? '').trim() || 'No reason provided',
-        };
-    } catch {
-        return { relevant: false, score: 0, reason: 'Invalid JSON from relevance assessment' };
-    }
+    const loose = parseLooseRelevanceFields(trimmed);
+    if (loose) return loose;
+
+    return { relevant: false, score: 0, reason: 'Could not parse AI relevance response' };
+}
+
+function parseLooseRelevanceFields(raw: string): SkillsRelevanceAssessment | null {
+    const scoreMatch =
+        raw.match(/"score"\s*:\s*([\d.]+)/i) ?? raw.match(/\bscore\s*[=:]\s*([\d.]+)/i);
+    if (!scoreMatch) return null;
+
+    const score = Math.min(1, Math.max(0, parseFloat(scoreMatch[1])));
+    if (!Number.isFinite(score)) return null;
+
+    const relevantMatch = raw.match(/"relevant"\s*:\s*(true|false)/i);
+    const relevant =
+        relevantMatch != null
+            ? relevantMatch[1].toLowerCase() === 'true'
+            : score >= 0.35;
+
+    const reasonMatch = raw.match(/"reason"\s*:\s*"([^"]+)"/i);
+    return {
+        relevant: relevant && score >= 0.35,
+        score,
+        reason: reasonMatch?.[1]?.trim() || 'Parsed from loose response',
+    };
+}
+
+export function isRelevanceAssessmentFailure(assessment: SkillsRelevanceAssessment): boolean {
+    if (assessment.score > 0) return false;
+    const reason = assessment.reason.toLowerCase();
+    return (
+        reason.includes('api error') ||
+        reason.includes('could not parse') ||
+        reason.includes('invalid json') ||
+        reason.includes('assessment failed') ||
+        reason.includes('rate limit') ||
+        reason.includes('model_not_found') ||
+        reason.includes('does not exist') ||
+        reason.includes('json_validate_failed')
+    );
 }
 
 export function isSkillsRelevanceMatch(
     assessment: SkillsRelevanceAssessment,
     minScore: number
 ): boolean {
-    return assessment.relevant && assessment.score >= minScore;
+    return assessment.score >= minScore;
 }

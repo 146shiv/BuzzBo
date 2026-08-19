@@ -74,5 +74,6 @@ export declare function isUnusableAiComment(text: string): boolean;
 export declare function getGenericStudyFallbackComment(mentionHandle?: string): string;
 export declare function hasActionablePostContext(postText: string, imageUrl?: string, videoUrl?: string, videoAnalysisAvailable?: boolean, isVideoPost?: boolean): boolean;
 export declare function parseSkillsRelevanceResponse(raw: string): SkillsRelevanceAssessment;
+export declare function isRelevanceAssessmentFailure(assessment: SkillsRelevanceAssessment): boolean;
 export declare function isSkillsRelevanceMatch(assessment: SkillsRelevanceAssessment, minScore: number): boolean;
 //# sourceMappingURL=genai.d.ts.map

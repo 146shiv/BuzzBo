@@ -120,7 +120,18 @@ export class AppContext extends EventEmitter {
         };
         saveSession(session);
         this.session = session;
-        await this.refreshConfig();
+        try {
+            await this.refreshConfig();
+        } catch (err) {
+            clearSession();
+            this.session = null;
+            client.setToken(null);
+            const detail = err instanceof Error ? err.message : 'Failed to load config';
+            throw new Error(
+                `Signed in but could not load your bot config from the admin API (${detail}). ` +
+                    'Check Vercel env (SUPABASE_*, ENCRYPTION_KEY) and that this user has a configuration assigned.'
+            );
+        }
         return session;
     }
 

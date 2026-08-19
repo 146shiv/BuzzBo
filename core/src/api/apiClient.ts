@@ -156,17 +156,26 @@ export class AdminApiClient {
                 throw new Error('Not authenticated');
             }
         }
-        const res = await fetch(`${this.baseUrl}${path}`, {
-            ...init,
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${this.token}`,
-                ...init.headers,
-            },
-        });
-        const data = (await res.json()) as T & { error?: string };
-        if (!res.ok) throw new Error(data.error || `Request failed: ${path}`);
-        return data as T;
+        try {
+            const res = await fetch(`${this.baseUrl}${path}`, {
+                ...init,
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${this.token}`,
+                    ...init.headers,
+                },
+            });
+            const data = (await res.json()) as T & { error?: string };
+            if (!res.ok) throw new Error(data.error || `Request failed: ${path}`);
+            return data as T;
+        } catch (err) {
+            if (err instanceof TypeError && String(err.message).includes('fetch failed')) {
+                throw new Error(
+                    `Cannot reach Buzzbo Admin at ${this.baseUrl}. Start it in another terminal: npm run dev — or use npm run dev:electron:prod to hit production.`
+                );
+            }
+            throw err;
+        }
     }
 
     async getMe(): Promise<MeResponse> {
