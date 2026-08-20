@@ -117,6 +117,74 @@ type OpenAiContentPart =
     | { type: 'text'; text: string }
     | { type: 'image_url'; image_url: { url: string } };
 
+type OpenAiChatCompletionPayload = {
+    choices?: Array<{
+        finish_reason?: string | null;
+        message?: { content?: string | null; reasoning?: string | null };
+    }>;
+    usage?: {
+        completion_tokens?: number;
+        completion_tokens_details?: { reasoning_tokens?: number };
+    };
+};
+
+function isGroqReasoningModel(model: string): boolean {
+    const normalized = model.toLowerCase();
+    return normalized.includes('gpt-oss') || normalized.startsWith('qwen/');
+}
+
+function buildOpenAiCompatibleBody(
+    model: string,
+    messages: OpenAiChatMessage[],
+    options: {
+        providerLabel: 'groq' | 'local';
+        temperature: number;
+        maxCompletionTokens: number;
+        jsonMode?: boolean;
+    }
+): Record<string, unknown> {
+    if (options.providerLabel === 'groq' && isGroqReasoningModel(model)) {
+        return {
+            model,
+            messages,
+            temperature: options.temperature,
+            max_completion_tokens: options.maxCompletionTokens,
+            reasoning_effort: 'low',
+            include_reasoning: false,
+            ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+        };
+    }
+
+    return {
+        model,
+        messages,
+        temperature: options.temperature,
+        max_tokens: options.maxCompletionTokens,
+        ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    };
+}
+
+function extractChatCompletionText(payload: OpenAiChatCompletionPayload): string {
+    const choice = payload.choices?.[0];
+    const content = choice?.message?.content?.trim();
+    if (content) return content;
+
+    const reasoning = choice?.message?.reasoning?.trim();
+    if (!reasoning) return '';
+
+    const jsonMatch = reasoning.match(/\{[\s\S]*\}/);
+    if (jsonMatch) return jsonMatch[0];
+    if (reasoning.length <= 280) return reasoning;
+    return '';
+}
+
+function logEmptyGroqCompletion(model: string, payload: OpenAiChatCompletionPayload): void {
+    const choice = payload.choices?.[0];
+    console.warn(
+        `[AI_WARN] Empty Groq content for ${model} (finish_reason=${choice?.finish_reason ?? 'unknown'} reasoning_tokens=${payload.usage?.completion_tokens_details?.reasoning_tokens ?? 'n/a'})`
+    );
+}
+
 export async function fetchImageAsBase64ForComment(imageUrl: string): Promise<MediaPayload | null> {
     try {
         const response = await fetch(imageUrl);
@@ -376,8 +444,6 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
         messages: OpenAiChatMessage[],
         targetUsername: string
     ): Promise<string> {
-        await this.rateLimiter.acquire();
-
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
         };
@@ -385,28 +451,40 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
             headers.Authorization = `Bearer ${apiKey}`;
         }
 
-        const response = await fetch(`${apiUrl}/chat/completions`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                model,
-                messages,
-                temperature: 0.9,
-                max_tokens: 80,
-            }),
-        });
+        const request = async (maxCompletionTokens: number): Promise<OpenAiChatCompletionPayload> => {
+            await this.rateLimiter.acquire();
+            const response = await fetch(`${apiUrl}/chat/completions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(
+                    buildOpenAiCompatibleBody(model, messages, {
+                        providerLabel,
+                        temperature: 0.9,
+                        maxCompletionTokens,
+                    })
+                ),
+            });
 
-        if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(
-                `${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`
-            );
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new Error(
+                    `${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`
+                );
+            }
+
+            return (await response.json()) as OpenAiChatCompletionPayload;
+        };
+
+        const tokenBudget = providerLabel === 'groq' && isGroqReasoningModel(model) ? 1024 : 80;
+        let payload = await request(tokenBudget);
+        let text = extractChatCompletionText(payload);
+
+        if (!text && providerLabel === 'groq') {
+            logEmptyGroqCompletion(model, payload);
+            payload = await request(isGroqReasoningModel(model) ? 2048 : 200);
+            text = extractChatCompletionText(payload);
         }
 
-        const payload = (await response.json()) as {
-            choices?: Array<{ message?: { content?: string } }>;
-        };
-        const text = payload.choices?.[0]?.message?.content;
         if (!text) {
             throw new Error(`${providerLabel} returned an empty comment.`);
         }
@@ -468,12 +546,13 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
                 case 'gemini':
                     return await this.generateWithGemini(promptText, imageData, videoData, targetUsername);
                 case 'groq':
+                    // gpt-oss text models do not reliably handle image payloads; caption is enough.
                     return await this.generateWithOpenAiCompatible(
                         'groq',
                         'https://api.groq.com/openai/v1',
                         this.groqApiKey,
-                        imageData ? this.groqVisionModel : this.groqModel,
-                        this.buildOpenAiMessages(promptText, imageData),
+                        this.groqModel,
+                        this.buildOpenAiMessages(promptText, null),
                         targetUsername
                     );
                 case 'local':
@@ -717,7 +796,10 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
         messages: OpenAiChatMessage[],
         options?: { jsonMode?: boolean }
     ): Promise<string> {
-        const attempt = async (useJsonMode: boolean): Promise<Response> => {
+        const attempt = async (
+            useJsonMode: boolean,
+            maxCompletionTokens: number
+        ): Promise<Response> => {
             await this.rateLimiter.acquire();
             const headers: Record<string, string> = { 'Content-Type': 'application/json' };
             if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
@@ -736,24 +818,28 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
             return fetch(`${apiUrl}/chat/completions`, {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({
-                    model,
-                    messages: requestMessages,
-                    temperature: 0.2,
-                    max_tokens: useJsonMode ? 150 : 220,
-                    ...(useJsonMode ? { response_format: { type: 'json_object' } } : {}),
-                }),
+                body: JSON.stringify(
+                    buildOpenAiCompatibleBody(model, requestMessages, {
+                        providerLabel,
+                        temperature: 0.2,
+                        maxCompletionTokens,
+                        jsonMode: useJsonMode,
+                    })
+                ),
             });
         };
 
-        let response = await attempt(Boolean(options?.jsonMode));
+        const baseTokens =
+            providerLabel === 'groq' && isGroqReasoningModel(model) ? 512 : 220;
+
+        let response = await attempt(Boolean(options?.jsonMode), baseTokens);
         if (!response.ok && options?.jsonMode) {
             const errorBody = await response.text();
             if (errorBody.includes('json_validate_failed')) {
                 console.warn(
                     `[AI_WARN] ${providerLabel} JSON mode failed for ${model}; retrying without response_format`
                 );
-                response = await attempt(false);
+                response = await attempt(false, baseTokens);
             } else {
                 throw new Error(
                     `${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`
@@ -766,10 +852,24 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
             throw new Error(`${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`);
         }
 
-        const payload = (await response.json()) as {
-            choices?: Array<{ message?: { content?: string } }>;
-        };
-        return (payload.choices?.[0]?.message?.content ?? '').trim();
+        let payload = (await response.json()) as OpenAiChatCompletionPayload;
+        let text = extractChatCompletionText(payload);
+        if (!text) {
+            if (providerLabel === 'groq') {
+                logEmptyGroqCompletion(model, payload);
+            }
+            console.warn(`[AI_WARN] ${providerLabel} returned empty content for ${model}; retrying once`);
+            response = await attempt(false, providerLabel === 'groq' && isGroqReasoningModel(model) ? 1024 : baseTokens);
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new Error(
+                    `${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`
+                );
+            }
+            payload = (await response.json()) as OpenAiChatCompletionPayload;
+            text = extractChatCompletionText(payload);
+        }
+        return text;
     }
 
     public async assessSkillsRelevance(
@@ -843,6 +943,19 @@ export class AICommentGenerator implements AICommentGeneratorAdapter {
                     assessment.reason === 'Invalid JSON from relevance assessment'
                 ) {
                     console.warn(`[AI_WARN] Relevance compact retry failed; raw: ${raw.slice(0, 240)}`);
+                }
+            }
+
+            if (
+                assessment.reason === 'Could not parse AI relevance response' ||
+                assessment.reason === 'Invalid JSON from relevance assessment'
+            ) {
+                const heuristic = inferRelevanceFromCaption(postText, options?.authorUsername);
+                if (heuristic) {
+                    console.warn(
+                        `[AI_WARN] Using caption keyword relevance fallback: ${heuristic.score.toFixed(2)}`
+                    );
+                    return heuristic;
                 }
             }
 
@@ -972,6 +1085,45 @@ export function hasActionablePostContext(
     }
 
     return substantiveCaption;
+}
+
+const STUDY_RELEVANCE_TERMS = [
+    'study',
+    'studying',
+    'exam',
+    'focus',
+    'streak',
+    'pomodoro',
+    'productivity',
+    'student',
+    'padhai',
+    'neet',
+    'jee',
+    'revision',
+    'notes',
+    'planner',
+    'distraction',
+    'procrastinat',
+    'routine',
+    'discipline',
+    'academic',
+    'homework',
+    'assignment',
+];
+
+function inferRelevanceFromCaption(
+    postText: string,
+    authorUsername?: string
+): SkillsRelevanceAssessment | null {
+    const haystack = `${postText} ${authorUsername ?? ''}`.toLowerCase();
+    const matches = STUDY_RELEVANCE_TERMS.filter(term => haystack.includes(term));
+    if (matches.length === 0) return null;
+    const score = Math.min(0.78, 0.38 + matches.length * 0.06);
+    return {
+        relevant: score >= 0.35,
+        score,
+        reason: `Caption keyword heuristic (${matches.slice(0, 4).join(', ')})`,
+    };
 }
 
 export function parseSkillsRelevanceResponse(raw: string): SkillsRelevanceAssessment {

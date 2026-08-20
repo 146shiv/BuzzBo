@@ -49,6 +49,49 @@ class AiRateLimiter {
         }
     }
 }
+function isGroqReasoningModel(model) {
+    const normalized = model.toLowerCase();
+    return normalized.includes('gpt-oss') || normalized.startsWith('qwen/');
+}
+function buildOpenAiCompatibleBody(model, messages, options) {
+    if (options.providerLabel === 'groq' && isGroqReasoningModel(model)) {
+        return {
+            model,
+            messages,
+            temperature: options.temperature,
+            max_completion_tokens: options.maxCompletionTokens,
+            reasoning_effort: 'low',
+            include_reasoning: false,
+            ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+        };
+    }
+    return {
+        model,
+        messages,
+        temperature: options.temperature,
+        max_tokens: options.maxCompletionTokens,
+        ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    };
+}
+function extractChatCompletionText(payload) {
+    const choice = payload.choices?.[0];
+    const content = choice?.message?.content?.trim();
+    if (content)
+        return content;
+    const reasoning = choice?.message?.reasoning?.trim();
+    if (!reasoning)
+        return '';
+    const jsonMatch = reasoning.match(/\{[\s\S]*\}/);
+    if (jsonMatch)
+        return jsonMatch[0];
+    if (reasoning.length <= 280)
+        return reasoning;
+    return '';
+}
+function logEmptyGroqCompletion(model, payload) {
+    const choice = payload.choices?.[0];
+    console.warn(`[AI_WARN] Empty Groq content for ${model} (finish_reason=${choice?.finish_reason ?? 'unknown'} reasoning_tokens=${payload.usage?.completion_tokens_details?.reasoning_tokens ?? 'n/a'})`);
+}
 async function fetchImageAsBase64ForComment(imageUrl) {
     try {
         const response = await fetch(imageUrl);
@@ -236,29 +279,37 @@ class AICommentGenerator {
         return this.sanitizeComment(result.text ?? '');
     }
     async generateWithOpenAiCompatible(providerLabel, apiUrl, apiKey, model, messages, targetUsername) {
-        await this.rateLimiter.acquire();
         const headers = {
             'Content-Type': 'application/json',
         };
         if (apiKey) {
             headers.Authorization = `Bearer ${apiKey}`;
         }
-        const response = await fetch(`${apiUrl}/chat/completions`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                model,
-                messages,
-                temperature: 0.9,
-                max_tokens: 80,
-            }),
-        });
-        if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(`${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`);
+        const request = async (maxCompletionTokens) => {
+            await this.rateLimiter.acquire();
+            const response = await fetch(`${apiUrl}/chat/completions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(buildOpenAiCompatibleBody(model, messages, {
+                    providerLabel,
+                    temperature: 0.9,
+                    maxCompletionTokens,
+                })),
+            });
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new Error(`${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`);
+            }
+            return (await response.json());
+        };
+        const tokenBudget = providerLabel === 'groq' && isGroqReasoningModel(model) ? 1024 : 80;
+        let payload = await request(tokenBudget);
+        let text = extractChatCompletionText(payload);
+        if (!text && providerLabel === 'groq') {
+            logEmptyGroqCompletion(model, payload);
+            payload = await request(isGroqReasoningModel(model) ? 2048 : 200);
+            text = extractChatCompletionText(payload);
         }
-        const payload = (await response.json());
-        const text = payload.choices?.[0]?.message?.content;
         if (!text) {
             throw new Error(`${providerLabel} returned an empty comment.`);
         }
@@ -295,7 +346,8 @@ class AICommentGenerator {
                 case 'gemini':
                     return await this.generateWithGemini(promptText, imageData, videoData, targetUsername);
                 case 'groq':
-                    return await this.generateWithOpenAiCompatible('groq', 'https://api.groq.com/openai/v1', this.groqApiKey, imageData ? this.groqVisionModel : this.groqModel, this.buildOpenAiMessages(promptText, imageData), targetUsername);
+                    // gpt-oss text models do not reliably handle image payloads; caption is enough.
+                    return await this.generateWithOpenAiCompatible('groq', 'https://api.groq.com/openai/v1', this.groqApiKey, this.groqModel, this.buildOpenAiMessages(promptText, null), targetUsername);
                 case 'local':
                     return await this.generateWithOpenAiCompatible('local', this.localLlmBaseUrl, undefined, this.localLlmModel, this.buildOpenAiMessages(promptText, imageData), targetUsername);
                 default:
@@ -424,7 +476,7 @@ class AICommentGenerator {
         }
     }
     async callOpenAiCompatibleRaw(providerLabel, apiUrl, apiKey, model, messages, options) {
-        const attempt = async (useJsonMode) => {
+        const attempt = async (useJsonMode, maxCompletionTokens) => {
             await this.rateLimiter.acquire();
             const headers = { 'Content-Type': 'application/json' };
             if (apiKey)
@@ -441,21 +493,21 @@ class AICommentGenerator {
             return fetch(`${apiUrl}/chat/completions`, {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({
-                    model,
-                    messages: requestMessages,
+                body: JSON.stringify(buildOpenAiCompatibleBody(model, requestMessages, {
+                    providerLabel,
                     temperature: 0.2,
-                    max_tokens: useJsonMode ? 150 : 220,
-                    ...(useJsonMode ? { response_format: { type: 'json_object' } } : {}),
-                }),
+                    maxCompletionTokens,
+                    jsonMode: useJsonMode,
+                })),
             });
         };
-        let response = await attempt(Boolean(options?.jsonMode));
+        const baseTokens = providerLabel === 'groq' && isGroqReasoningModel(model) ? 512 : 220;
+        let response = await attempt(Boolean(options?.jsonMode), baseTokens);
         if (!response.ok && options?.jsonMode) {
             const errorBody = await response.text();
             if (errorBody.includes('json_validate_failed')) {
                 console.warn(`[AI_WARN] ${providerLabel} JSON mode failed for ${model}; retrying without response_format`);
-                response = await attempt(false);
+                response = await attempt(false, baseTokens);
             }
             else {
                 throw new Error(`${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`);
@@ -465,8 +517,22 @@ class AICommentGenerator {
             const errorBody = await response.text();
             throw new Error(`${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`);
         }
-        const payload = (await response.json());
-        return (payload.choices?.[0]?.message?.content ?? '').trim();
+        let payload = (await response.json());
+        let text = extractChatCompletionText(payload);
+        if (!text) {
+            if (providerLabel === 'groq') {
+                logEmptyGroqCompletion(model, payload);
+            }
+            console.warn(`[AI_WARN] ${providerLabel} returned empty content for ${model}; retrying once`);
+            response = await attempt(false, providerLabel === 'groq' && isGroqReasoningModel(model) ? 1024 : baseTokens);
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new Error(`${providerLabel} API error (${response.status}): ${errorBody.slice(0, 300)}`);
+            }
+            payload = (await response.json());
+            text = extractChatCompletionText(payload);
+        }
+        return text;
     }
     async assessSkillsRelevance(postText, skillsContext, options) {
         if (this.mockComments) {
@@ -514,6 +580,14 @@ class AICommentGenerator {
                 if (assessment.reason === 'Could not parse AI relevance response' ||
                     assessment.reason === 'Invalid JSON from relevance assessment') {
                     console.warn(`[AI_WARN] Relevance compact retry failed; raw: ${raw.slice(0, 240)}`);
+                }
+            }
+            if (assessment.reason === 'Could not parse AI relevance response' ||
+                assessment.reason === 'Invalid JSON from relevance assessment') {
+                const heuristic = inferRelevanceFromCaption(postText, options?.authorUsername);
+                if (heuristic) {
+                    console.warn(`[AI_WARN] Using caption keyword relevance fallback: ${heuristic.score.toFixed(2)}`);
+                    return heuristic;
                 }
             }
             return assessment;
@@ -624,6 +698,41 @@ function hasActionablePostContext(postText, imageUrl, videoUrl, videoAnalysisAva
         return substantiveCaption;
     }
     return substantiveCaption;
+}
+const STUDY_RELEVANCE_TERMS = [
+    'study',
+    'studying',
+    'exam',
+    'focus',
+    'streak',
+    'pomodoro',
+    'productivity',
+    'student',
+    'padhai',
+    'neet',
+    'jee',
+    'revision',
+    'notes',
+    'planner',
+    'distraction',
+    'procrastinat',
+    'routine',
+    'discipline',
+    'academic',
+    'homework',
+    'assignment',
+];
+function inferRelevanceFromCaption(postText, authorUsername) {
+    const haystack = `${postText} ${authorUsername ?? ''}`.toLowerCase();
+    const matches = STUDY_RELEVANCE_TERMS.filter(term => haystack.includes(term));
+    if (matches.length === 0)
+        return null;
+    const score = Math.min(0.78, 0.38 + matches.length * 0.06);
+    return {
+        relevant: score >= 0.35,
+        score,
+        reason: `Caption keyword heuristic (${matches.slice(0, 4).join(', ')})`,
+    };
 }
 function parseSkillsRelevanceResponse(raw) {
     let trimmed = raw.trim();
